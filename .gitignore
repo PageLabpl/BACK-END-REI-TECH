@@ -1,0 +1,8 @@
+.env
+node_modules/
+uploads/*.png
+uploads/*.jpg
+uploads/*.jpeg
+uploads/*.webp
+data/products.json
+data/orders.json

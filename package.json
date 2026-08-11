@@ -1,0 +1,15 @@
+{
+  "name": "reitech-backend",
+  "version": "1.0.0",
+  "description": "Backend da loja REI TECH - produtos, pedidos, clientes, login seguro e Mercado Pago",
+  "main": "server.js",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "hash-password": "node scripts/hash-password.js"
+  },
+  "dependencies": {}
+}
