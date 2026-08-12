@@ -9,6 +9,7 @@ const { Router } = require("./lib/router");
 const store = require("./lib/store");
 const auth = require("./lib/auth");
 const mercadopago = require("./lib/mercadopago");
+const cloudinary = require("./lib/cloudinary");
 
 const PORT = process.env.PORT || 3001;
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -16,6 +17,9 @@ const ADMIN_PASSWORD_HASH = process.env.ADMIN_PASSWORD_HASH;
 const MP_ACCESS_TOKEN = process.env.MP_ACCESS_TOKEN;
 const FRONTEND_URL = process.env.FRONTEND_URL || "*";
 const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || `http://localhost:${PORT}`;
+const CLOUDINARY_CLOUD_NAME = process.env.CLOUDINARY_CLOUD_NAME;
+const CLOUDINARY_API_KEY = process.env.CLOUDINARY_API_KEY;
+const CLOUDINARY_API_SECRET = process.env.CLOUDINARY_API_SECRET;
 
 if (!JWT_SECRET || !ADMIN_PASSWORD_HASH) {
   console.error(
@@ -153,21 +157,30 @@ router.delete("/api/admin/products/:id", requireAuth, (req, res) => {
 
 // ---- Upload de imagem (admin) ----
 // Recebe { imageBase64: "data:image/jpeg;base64,...." } já comprimida pelo navegador
-router.post("/api/admin/upload", requireAuth, (req, res) => {
+// e envia para o Cloudinary, que guarda a imagem de forma permanente
+// (arquivos salvos localmente no Render são apagados a cada novo deploy).
+router.post("/api/admin/upload", requireAuth, async (req, res) => {
   const { imageBase64 } = req.body || {};
   if (!imageBase64 || !imageBase64.startsWith("data:image/")) {
     return json(res, 400, { error: "Imagem inválida." });
   }
-  const match = imageBase64.match(/^data:image\/(png|jpeg|jpg|webp);base64,(.+)$/);
-  if (!match) return json(res, 400, { error: "Formato de imagem não suportado." });
-  const ext = match[1] === "jpeg" ? "jpg" : match[1];
-  const buffer = Buffer.from(match[2], "base64");
-  if (buffer.length > 6 * 1024 * 1024) {
+  if (!CLOUDINARY_CLOUD_NAME || !CLOUDINARY_API_KEY || !CLOUDINARY_API_SECRET) {
+    return json(res, 500, { error: "Upload de imagem não configurado no servidor (faltam as credenciais do Cloudinary)." });
+  }
+  const approxBytes = imageBase64.length * 0.75;
+  if (approxBytes > 6 * 1024 * 1024) {
     return json(res, 400, { error: "Imagem muito grande (máx. 6MB)." });
   }
-  const filename = `${Date.now()}_${crypto.randomBytes(6).toString("hex")}.${ext}`;
-  fs.writeFileSync(path.join(UPLOADS_DIR, filename), buffer);
-  json(res, 201, { url: `${PUBLIC_BASE_URL}/uploads/${filename}` });
+  try {
+    const url = await cloudinary.uploadImage(imageBase64, {
+      cloudName: CLOUDINARY_CLOUD_NAME,
+      apiKey: CLOUDINARY_API_KEY,
+      apiSecret: CLOUDINARY_API_SECRET
+    });
+    json(res, 201, { url });
+  } catch (e) {
+    json(res, 500, { error: e.message });
+  }
 });
 
 // ---- Pedidos ----

@@ -45,7 +45,27 @@ curl http://localhost:3001/api/health
 
 ---
 
-## 2. Configurando o Mercado Pago
+## 2. Configurando o upload de imagens (Cloudinary)
+
+O Render apaga qualquer arquivo salvo localmente a cada novo deploy — por isso
+as imagens de produto são enviadas para o [Cloudinary](https://cloudinary.com),
+que tem um plano gratuito generoso e guarda as fotos permanentemente.
+
+1. Crie uma conta gratuita em [cloudinary.com](https://cloudinary.com).
+2. No **Dashboard**, copie três valores: **Cloud Name**, **API Key** e **API Secret**.
+3. Cole cada um no `.env`:
+   ```
+   CLOUDINARY_CLOUD_NAME=...
+   CLOUDINARY_API_KEY=...
+   CLOUDINARY_API_SECRET=...
+   ```
+
+Sem essas três variáveis, o botão de upload de imagem no admin retorna um erro
+claro em vez de falhar silenciosamente.
+
+---
+
+## 3. Configurando o Mercado Pago
 
 1. Crie uma conta em [mercadopago.com.br/developers](https://www.mercadopago.com.br/developers).
 2. No painel, vá em **Suas integrações → Credenciais de produção**.
@@ -58,7 +78,7 @@ O backend já expõe:
 
 ---
 
-## 3. Hospedando de verdade (deploy)
+## 4. Hospedando de verdade (deploy)
 
 Recomendo o **Render** (tem plano gratuito, é simples):
 
@@ -84,7 +104,7 @@ Alternativas equivalentes: [Railway](https://railway.app) ou [Fly.io](https://fl
 
 ---
 
-## 4. Conectando o site (frontend) a esse backend
+## 5. Conectando o site (frontend) a esse backend
 
 No arquivo `index.html` da loja, defina a constante `API_BASE_URL` com a URL
 do backend hospedado (ex: `https://reitech-backend.onrender.com`), e me avise
@@ -93,7 +113,7 @@ chamar essa API em vez do armazenamento local.
 
 ---
 
-## 5. Estrutura das rotas da API
+## 6. Estrutura das rotas da API
 
 | Método | Rota | Acesso | Descrição |
 |---|---|---|---|
@@ -117,7 +137,7 @@ Rotas marcadas como **admin** exigem o cabeçalho:
 
 ---
 
-## 6. Segurança — o que já está implementado
+## 7. Segurança — o que já está implementado
 
 - Senha do admin nunca fica em texto puro: é guardada com hash `scrypt` (nativo do Node).
 - Login gera um token assinado (HMAC-SHA256) que expira em 12 horas.
