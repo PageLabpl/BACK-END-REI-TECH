@@ -91,19 +91,19 @@ router.post("/api/auth/login", (req, res) => {
 });
 
 // ---- Produtos (público) ----
-router.get("/api/products", (req, res) => {
-  const products = store.readJSON("products.json", DEFAULT_PRODUCTS);
+router.get("/api/products", async (req, res) => {
+  const products = await store.readJSON("products.json", DEFAULT_PRODUCTS);
   json(res, 200, products.filter((p) => p.active !== false));
 });
 
 // ---- Produtos (admin) ----
-router.get("/api/admin/products", requireAuth, (req, res) => {
-  const products = store.readJSON("products.json", DEFAULT_PRODUCTS);
+router.get("/api/admin/products", requireAuth, async (req, res) => {
+  const products = await store.readJSON("products.json", DEFAULT_PRODUCTS);
   json(res, 200, products);
 });
 
-router.post("/api/admin/products", requireAuth, (req, res) => {
-  const products = store.readJSON("products.json", DEFAULT_PRODUCTS);
+router.post("/api/admin/products", requireAuth, async (req, res) => {
+  const products = await store.readJSON("products.json", DEFAULT_PRODUCTS);
   const p = req.body || {};
   if (!p.name || p.price === undefined) {
     return json(res, 400, { error: "Nome e preço são obrigatórios." });
@@ -121,12 +121,12 @@ router.post("/api/admin/products", requireAuth, (req, res) => {
     active: p.active !== false
   };
   products.push(product);
-  store.writeJSON("products.json", products);
+  await store.writeJSON("products.json", products);
   json(res, 201, product);
 });
 
-router.put("/api/admin/products/:id", requireAuth, (req, res) => {
-  const products = store.readJSON("products.json", DEFAULT_PRODUCTS);
+router.put("/api/admin/products/:id", requireAuth, async (req, res) => {
+  const products = await store.readJSON("products.json", DEFAULT_PRODUCTS);
   const idx = products.findIndex((x) => x.id === req.params.id);
   if (idx === -1) return json(res, 404, { error: "Produto não encontrado." });
   const p = req.body || {};
@@ -142,23 +142,23 @@ router.put("/api/admin/products/:id", requireAuth, (req, res) => {
     badge: p.badge !== undefined ? String(p.badge) : products[idx].badge,
     active: p.active !== undefined ? Boolean(p.active) : products[idx].active
   };
-  store.writeJSON("products.json", products);
+  await store.writeJSON("products.json", products);
   json(res, 200, products[idx]);
 });
 
-router.delete("/api/admin/products/:id", requireAuth, (req, res) => {
-  let products = store.readJSON("products.json", DEFAULT_PRODUCTS);
+router.delete("/api/admin/products/:id", requireAuth, async (req, res) => {
+  let products = await store.readJSON("products.json", DEFAULT_PRODUCTS);
   const exists = products.some((x) => x.id === req.params.id);
   if (!exists) return json(res, 404, { error: "Produto não encontrado." });
   products = products.filter((x) => x.id !== req.params.id);
-  store.writeJSON("products.json", products);
+  await store.writeJSON("products.json", products);
   json(res, 200, { deleted: true });
 });
 
 // ---- Upload de imagem (admin) ----
 // Recebe { imageBase64: "data:image/jpeg;base64,...." } já comprimida pelo navegador
 // e envia para o Cloudinary, que guarda a imagem de forma permanente
-// (arquivos salvos localmente no Render são apagados a cada novo deploy).
+// (arquivos salvos localmente no Render são apagados a cada novo deploy/restart).
 router.post("/api/admin/upload", requireAuth, async (req, res) => {
   const { imageBase64 } = req.body || {};
   if (!imageBase64 || !imageBase64.startsWith("data:image/")) {
@@ -184,12 +184,12 @@ router.post("/api/admin/upload", requireAuth, async (req, res) => {
 });
 
 // ---- Pedidos ----
-router.post("/api/orders", (req, res) => {
+router.post("/api/orders", async (req, res) => {
   const { customer, items } = req.body || {};
   if (!customer || !customer.name || !customer.phone || !Array.isArray(items) || items.length === 0) {
     return json(res, 400, { error: "Dados do pedido incompletos." });
   }
-  const products = store.readJSON("products.json", DEFAULT_PRODUCTS);
+  const products = await store.readJSON("products.json", DEFAULT_PRODUCTS);
   // Recalcula o total no servidor a partir do preço real do produto —
   // nunca confiar no preço enviado pelo navegador.
   let total = 0;
@@ -205,7 +205,7 @@ router.post("/api/orders", (req, res) => {
   }
   if (resolvedItems.length === 0) return json(res, 400, { error: "Nenhum item válido no pedido." });
 
-  const orders = store.readJSON("orders.json", []);
+  const orders = await store.readJSON("orders.json", []);
   const order = {
     id: "ord_" + crypto.randomBytes(6).toString("hex"),
     date: new Date().toISOString(),
@@ -220,28 +220,28 @@ router.post("/api/orders", (req, res) => {
     status: "pendente"
   };
   orders.push(order);
-  store.writeJSON("orders.json", orders);
+  await store.writeJSON("orders.json", orders);
   json(res, 201, order);
 });
 
-router.get("/api/admin/orders", requireAuth, (req, res) => {
-  const orders = store.readJSON("orders.json", []);
+router.get("/api/admin/orders", requireAuth, async (req, res) => {
+  const orders = await store.readJSON("orders.json", []);
   json(res, 200, orders);
 });
 
-router.put("/api/admin/orders/:id/status", requireAuth, (req, res) => {
-  const orders = store.readJSON("orders.json", []);
+router.put("/api/admin/orders/:id/status", requireAuth, async (req, res) => {
+  const orders = await store.readJSON("orders.json", []);
   const order = orders.find((o) => o.id === req.params.id);
   if (!order) return json(res, 404, { error: "Pedido não encontrado." });
   const allowed = ["pendente", "confirmado", "enviado", "entregue", "cancelado"];
   if (!allowed.includes(req.body.status)) return json(res, 400, { error: "Status inválido." });
   order.status = req.body.status;
-  store.writeJSON("orders.json", orders);
+  await store.writeJSON("orders.json", orders);
   json(res, 200, order);
 });
 
-router.get("/api/admin/customers", requireAuth, (req, res) => {
-  const orders = store.readJSON("orders.json", []);
+router.get("/api/admin/customers", requireAuth, async (req, res) => {
+  const orders = await store.readJSON("orders.json", []);
   const map = {};
   orders.forEach((o) => {
     const key = (o.customer.phone || o.customer.email || o.customer.name).toLowerCase();
@@ -256,7 +256,7 @@ router.get("/api/admin/customers", requireAuth, (req, res) => {
 router.post("/api/payments/create-preference", async (req, res) => {
   if (!MP_ACCESS_TOKEN) return json(res, 500, { error: "Mercado Pago não configurado no servidor (falta MP_ACCESS_TOKEN)." });
   const { orderId } = req.body || {};
-  const orders = store.readJSON("orders.json", []);
+  const orders = await store.readJSON("orders.json", []);
   const order = orders.find((o) => o.id === orderId);
   if (!order) return json(res, 404, { error: "Pedido não encontrado." });
 
@@ -279,7 +279,7 @@ router.post("/api/payments/create-preference", async (req, res) => {
       notificationUrl: `${PUBLIC_BASE_URL}/api/payments/webhook`
     });
     order.mpPreferenceId = pref.id;
-    store.writeJSON("orders.json", orders);
+    await store.writeJSON("orders.json", orders);
     json(res, 200, { init_point: pref.init_point, preferenceId: pref.id });
   } catch (e) {
     json(res, 500, { error: "Erro do Mercado Pago: " + e.message });
@@ -295,12 +295,12 @@ router.post("/api/payments/webhook", async (req, res) => {
     const payment = await mercadopago.getPayment(paymentId, MP_ACCESS_TOKEN);
     const orderId = payment.external_reference;
     if (orderId && payment.status === "approved") {
-      const orders = store.readJSON("orders.json", []);
+      const orders = await store.readJSON("orders.json", []);
       const order = orders.find((o) => o.id === orderId);
       if (order && order.status === "pendente") {
         order.status = "confirmado";
         order.paymentId = payment.id;
-        store.writeJSON("orders.json", orders);
+        await store.writeJSON("orders.json", orders);
       }
     }
   } catch (e) {
@@ -335,9 +335,14 @@ const server = http.createServer(async (req, res) => {
     return res.end();
   }
 
-  const handled = await router.handle(req, res, url);
-  if (!handled) {
-    json(res, 404, { error: "Rota não encontrada." });
+  try {
+    const handled = await router.handle(req, res, url);
+    if (!handled) {
+      json(res, 404, { error: "Rota não encontrada." });
+    }
+  } catch (e) {
+    console.error("Erro não tratado numa rota:", e);
+    if (!res.headersSent) json(res, 500, { error: "Erro interno do servidor." });
   }
 });
 

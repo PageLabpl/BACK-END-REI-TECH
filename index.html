@@ -399,9 +399,14 @@
       <div class="field"><label>WhatsApp / telefone</label><input type="tel" id="ckPhone" required placeholder="(68) 90000-0000"></div>
       <div class="field"><label>E-mail</label><input type="email" id="ckEmail" required></div>
       <div class="field"><label>Endereço de entrega</label><textarea id="ckAddress" required placeholder="Rua, número, bairro, cidade - UF, CEP"></textarea></div>
-      <button type="submit" class="btn btn-solid btn-full" id="checkoutSubmitBtn">Confirmar pedido</button>
-      <p class="field-hint" style="text-align:center;margin-top:10px">Depois de confirmar, você será direcionado ao WhatsApp pra combinar o pagamento.</p>
+      <button type="submit" class="btn btn-solid btn-full" id="checkoutSubmitBtn">Ir para o pagamento</button>
+      <p class="field-hint" style="text-align:center;margin-top:10px">Você será redirecionado ao Mercado Pago para concluir o pagamento com segurança.</p>
     </form>
+    <div id="checkoutErrorBox" style="display:none;text-align:center;padding:8px 0">
+      <p style="color:var(--danger,#f87171);margin-bottom:14px" id="checkoutErrorText"></p>
+      <button type="button" class="btn btn-solid btn-full" id="checkoutRetryBtn" onclick="retryPayment()">Tentar pagamento novamente</button>
+      <button type="button" class="btn btn-outline btn-full" style="margin-top:10px" onclick="closeCheckout()">Fechar</button>
+    </div>
   </div>
 </div>
 
@@ -732,9 +737,13 @@ document.getElementById('cartPill').addEventListener('click', openCart);
 /* ============================================================
    CHECKOUT
    ============================================================ */
+let lastOrder = null; // guarda o pedido criado, caso seja preciso tentar o pagamento de novo
+
 function openCheckout(){
   if(cart.length === 0) return;
   closeCart();
+  document.getElementById('checkoutForm').style.display = '';
+  document.getElementById('checkoutErrorBox').style.display = 'none';
   document.getElementById('checkoutOverlay').classList.add('show');
 }
 function closeCheckout(){
@@ -760,33 +769,45 @@ async function submitOrder(e){
     order = await api("/api/orders", { method: "POST", body: { customer, items } });
   }catch(err){
     btn.disabled = false;
-    btn.textContent = "Confirmar pedido";
+    btn.textContent = "Ir para o pagamento";
     showToast(err.message);
     return;
   }
 
-  // Pedido criado — limpa o carrinho independente de como o pagamento vai continuar.
+  // Pedido criado — limpa o carrinho, o pedido já ficou salvo no backend.
   cart = [];
   updateCartCount();
   renderCart();
-  closeCheckout();
-  document.getElementById('checkoutForm').reset();
+  lastOrder = order;
   btn.disabled = false;
-  btn.textContent = "Confirmar pedido";
+  btn.textContent = "Ir para o pagamento";
 
-  // Tenta ir para o Mercado Pago. Só cai no WhatsApp se o Mercado Pago
-  // ainda não estiver configurado no backend ou der algum erro.
+  await goToPayment(order);
+}
+
+async function goToPayment(order){
   try{
     const pay = await api("/api/payments/create-preference", { method: "POST", body: { orderId: order.id } });
+    document.getElementById('checkoutForm').reset();
     showToast("Redirecionando para o pagamento...");
     window.location.href = pay.init_point;
   }catch(err){
     console.error("Erro ao criar pagamento no Mercado Pago:", err.message);
-    const itemsText = order.items.map(i => `${i.qty}x ${i.name} (${money(i.price)})`).join('%0A');
-    const msg = `Olá! Quero confirmar meu pedido na REI TECH:%0A%0A${itemsText}%0A%0ATotal: ${money(order.total)}%0A%0ANome: ${order.customer.name}%0AEndereço: ${order.customer.address}`;
-    window.open(`https://wa.me/${WHATSAPP_NUMBER}?text=${msg}`, '_blank');
-    showToast("Pagamento online indisponível (" + err.message + "). Combine pelo WhatsApp.");
+    document.getElementById('checkoutForm').style.display = 'none';
+    document.getElementById('checkoutErrorBox').style.display = '';
+    document.getElementById('checkoutErrorText').textContent =
+      "Não foi possível abrir o pagamento agora (" + err.message + "). Seu pedido #" + order.id + " já está salvo — tente novamente.";
   }
+}
+
+async function retryPayment(){
+  if(!lastOrder) return closeCheckout();
+  const retryBtn = document.getElementById('checkoutRetryBtn');
+  retryBtn.disabled = true;
+  retryBtn.textContent = "Tentando...";
+  await goToPayment(lastOrder);
+  retryBtn.disabled = false;
+  retryBtn.textContent = "Tentar pagamento novamente";
 }
 
 /* ============================================================
