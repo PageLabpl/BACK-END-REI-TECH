@@ -254,28 +254,35 @@ router.get("/api/admin/customers", requireAuth, (req, res) => {
 
 // ---- Pagamentos (Mercado Pago) ----
 router.post("/api/payments/create-preference", async (req, res) => {
-  if (!MP_ACCESS_TOKEN) return json(res, 500, { error: "Mercado Pago não configurado no servidor." });
+  if (!MP_ACCESS_TOKEN) return json(res, 500, { error: "Mercado Pago não configurado no servidor (falta MP_ACCESS_TOKEN)." });
   const { orderId } = req.body || {};
   const orders = store.readJSON("orders.json", []);
   const order = orders.find((o) => o.id === orderId);
   if (!order) return json(res, 404, { error: "Pedido não encontrado." });
 
+  // FRONTEND_URL só serve para montar os links de retorno se for uma URL de
+  // verdade (http/https). Se estiver como "*" (comum enquanto se ajusta o CORS),
+  // simplesmente não mandamos back_urls — o pagamento continua funcionando,
+  // só sem o redirecionamento automático de volta pro site.
+  const validFrontend = /^https?:\/\//.test(FRONTEND_URL || "");
+  const backUrls = validFrontend ? {
+    success: `${FRONTEND_URL}/#pedido-confirmado`,
+    pending: `${FRONTEND_URL}/#pedido-pendente`,
+    failure: `${FRONTEND_URL}/#pedido-falhou`
+  } : null;
+
   try {
     const pref = await mercadopago.createPreference({
       order,
       accessToken: MP_ACCESS_TOKEN,
-      backUrls: {
-        success: `${FRONTEND_URL}/#pedido-confirmado`,
-        pending: `${FRONTEND_URL}/#pedido-pendente`,
-        failure: `${FRONTEND_URL}/#pedido-falhou`
-      },
+      backUrls,
       notificationUrl: `${PUBLIC_BASE_URL}/api/payments/webhook`
     });
     order.mpPreferenceId = pref.id;
     store.writeJSON("orders.json", orders);
     json(res, 200, { init_point: pref.init_point, preferenceId: pref.id });
   } catch (e) {
-    json(res, 500, { error: e.message });
+    json(res, 500, { error: "Erro do Mercado Pago: " + e.message });
   }
 });
 

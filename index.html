@@ -523,8 +523,8 @@
 /* ============================================================
    DATA LAYER
    ============================================================ */
-const API_BASE_URL = "https://back-end-rei-tech.onrender.com";
-const WHATSAPP_NUMBER = "5568992186548"; // formato: código país + DDD + número
+const API_BASE_URL = "https://back-end-rei-tech-1.onrender.com";
+const WHATSAPP_NUMBER = "5568988198989"; // formato: código país + DDD + número
 
 let products = [];
 let orders = [];
@@ -781,10 +781,11 @@ async function submitOrder(e){
     showToast("Redirecionando para o pagamento...");
     window.location.href = pay.init_point;
   }catch(err){
+    console.error("Erro ao criar pagamento no Mercado Pago:", err.message);
     const itemsText = order.items.map(i => `${i.qty}x ${i.name} (${money(i.price)})`).join('%0A');
     const msg = `Olá! Quero confirmar meu pedido na REI TECH:%0A%0A${itemsText}%0A%0ATotal: ${money(order.total)}%0A%0ANome: ${order.customer.name}%0AEndereço: ${order.customer.address}`;
     window.open(`https://wa.me/${WHATSAPP_NUMBER}?text=${msg}`, '_blank');
-    showToast("Pagamento online ainda não disponível — combine pelo WhatsApp.");
+    showToast("Pagamento online indisponível (" + err.message + "). Combine pelo WhatsApp.");
   }
 }
 
