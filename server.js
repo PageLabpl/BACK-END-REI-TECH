@@ -118,7 +118,7 @@ function publicCustomer(c) {
 const router = new Router();
 
 // ---- Health check ----
-router.get("/api/health", (req, res) => json(res, 200, { ok: true }));
+router.get("/api/health", (req, res) => json(res, 200, { ok: true, storage: store.USE_SUPABASE ? "supabase" : "arquivo-local" }));
 
 // ---- Auth ----
 router.post("/api/auth/login", (req, res) => {
@@ -503,4 +503,5 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, () => {
   console.log(`REI TECH backend rodando em ${PUBLIC_BASE_URL} (porta ${PORT})`);
+  console.log(`Armazenamento: ${store.USE_SUPABASE ? "Supabase (permanente)" : "arquivo local (some a cada deploy no Render!)"}`);
 });

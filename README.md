@@ -65,7 +65,41 @@ claro em vez de falhar silenciosamente.
 
 ---
 
-## 3. Configurando o Mercado Pago
+## 3. Configurando o banco de dados permanente (Supabase)
+
+**Esse passo é essencial.** Sem ele, tudo que você cadastra (produtos, fotos,
+pedidos, contas de cliente) é apagado toda vez que o Render reinicia o
+servidor ou você faz um novo deploy — o disco dele é temporário.
+
+1. Crie uma conta gratuita em [supabase.com](https://supabase.com) e um projeto novo.
+2. Dentro do projeto, vá em **SQL Editor** (menu lateral) → **New query** → cole e rode isto:
+   ```sql
+   create table if not exists kv_store (
+     key text primary key,
+     value jsonb not null,
+     updated_at timestamptz not null default now()
+   );
+   ```
+3. Vá em **Project Settings → API**. Copie dois valores:
+   - **Project URL** → cole em `SUPABASE_URL`
+   - **service_role key** (não é a "anon"/"public" key!) → cole em `SUPABASE_SERVICE_KEY`
+4. Adiciona os dois no `.env` (local) e nas variáveis de ambiente do Render.
+
+> ⚠️ A `service_role key` dá acesso total ao banco, sem restrições. Ela deve
+> ficar **só no backend** (variável de ambiente do servidor) — nunca no
+> `index.html`, nunca no navegador, nunca em repositório público.
+
+Depois de configurado, o log do servidor mostra `Armazenamento: Supabase
+(permanente)` na inicialização — é assim que você confirma que pegou. Também
+dá pra conferir abrindo `/api/health`, que retorna `"storage":"supabase"`.
+
+Sem essas duas variáveis, o backend continua funcionando normalmente (não
+quebra nada), mas volta a usar arquivo local — útil só para testar na sua
+máquina, nunca para produção no Render.
+
+---
+
+## 4. Configurando o Mercado Pago
 
 1. Crie uma conta em [mercadopago.com.br/developers](https://www.mercadopago.com.br/developers).
 2. No painel, vá em **Suas integrações → Credenciais de produção**.
@@ -78,7 +112,7 @@ O backend já expõe:
 
 ---
 
-## 4. Hospedando de verdade (deploy)
+## 5. Hospedando de verdade (deploy)
 
 Recomendo o **Render** (tem plano gratuito, é simples):
 
@@ -104,7 +138,7 @@ Alternativas equivalentes: [Railway](https://railway.app) ou [Fly.io](https://fl
 
 ---
 
-## 5. Conectando o site (frontend) a esse backend
+## 6. Conectando o site (frontend) a esse backend
 
 No arquivo `index.html` da loja, defina a constante `API_BASE_URL` com a URL
 do backend hospedado (ex: `https://reitech-backend.onrender.com`), e me avise
@@ -113,7 +147,7 @@ chamar essa API em vez do armazenamento local.
 
 ---
 
-## 6. Estrutura das rotas da API
+## 7. Estrutura das rotas da API
 
 | Método | Rota | Acesso | Descrição |
 |---|---|---|---|
@@ -159,7 +193,7 @@ Rotas marcadas como **admin** exigem o cabeçalho `Authorization: Bearer TOKEN_A
 
 ---
 
-## 7. Segurança — o que já está implementado
+## 9. Segurança — o que já está implementado
 
 - Senha do admin nunca fica em texto puro: é guardada com hash `scrypt` (nativo do Node).
 - Login gera um token assinado (HMAC-SHA256) que expira em 12 horas.
