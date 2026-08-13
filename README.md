@@ -125,15 +125,37 @@ chamar essa API em vez do armazenamento local.
 | PUT | `/api/admin/products/:id` | admin | Edita produto |
 | DELETE | `/api/admin/products/:id` | admin | Remove produto |
 | POST | `/api/admin/upload` | admin | Envia imagem (base64) |
-| POST | `/api/orders` | público | Cliente cria um pedido |
+| POST | `/api/orders` | público (opcionalmente autenticado) | Cliente cria um pedido. Se enviado com o token de cliente, o pedido fica vinculado à conta e reaproveita nome/telefone/e-mail/endereço salvos quando não reenviados |
 | GET | `/api/admin/orders` | admin | Lista pedidos |
 | PUT | `/api/admin/orders/:id/status` | admin | Atualiza status do pedido |
 | GET | `/api/admin/customers` | admin | Lista clientes (derivado dos pedidos) |
+| POST | `/api/customers/signup` | público | Cliente cria uma conta (nome, e-mail, senha, telefone opcional) |
+| POST | `/api/customers/login` | público | Login do cliente, retorna token válido por 30 dias |
+| GET | `/api/customers/me` | cliente | Retorna os dados da conta logada |
+| PUT | `/api/customers/me` | cliente | Atualiza nome/telefone/endereço da conta |
+| GET | `/api/customers/orders` | cliente | Histórico de pedidos da conta logada |
 | POST | `/api/payments/create-preference` | público | Gera link de pagamento Mercado Pago |
 | POST | `/api/payments/webhook` | Mercado Pago | Confirma pagamento automaticamente |
 
-Rotas marcadas como **admin** exigem o cabeçalho:
-`Authorization: Bearer SEU_TOKEN` (obtido no login).
+Rotas marcadas como **admin** exigem o cabeçalho `Authorization: Bearer TOKEN_ADMIN`
+(obtido em `/api/auth/login`). Rotas marcadas como **cliente** exigem
+`Authorization: Bearer TOKEN_CLIENTE` (obtido em `/api/customers/login` ou `/api/customers/signup`)
+— são tokens diferentes, um não funciona no lugar do outro.
+
+---
+
+## 8. Contas de cliente — o que já está implementado
+
+- Cadastro com nome, e-mail e senha (mínimo 8 caracteres). Telefone é opcional no cadastro.
+- E-mail duplicado é bloqueado (`409 Conflict`).
+- Senha guardada com o mesmo hash seguro (`scrypt`) usado na senha do admin — nunca em texto puro.
+- Token de sessão do cliente dura **30 dias** (o do admin dura 12h) — o cliente
+  não precisa logar toda vez que visita o site, mas o token expira sozinho se
+  ele nunca mais voltar.
+- Limite de tentativas de login **separado** do limite do admin — um ataque de
+  força bruta em um não trava o outro.
+- Ao finalizar uma compra logado, o pedido fica automaticamente vinculado à
+  conta e reaproveita nome/telefone/e-mail/endereço já salvos, sem pedir de novo.
 
 ---
 

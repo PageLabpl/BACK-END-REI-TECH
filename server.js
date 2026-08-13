@@ -20,6 +20,7 @@ const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || `http://localhost:${PORT}
 const CLOUDINARY_CLOUD_NAME = process.env.CLOUDINARY_CLOUD_NAME;
 const CLOUDINARY_API_KEY = process.env.CLOUDINARY_API_KEY;
 const CLOUDINARY_API_SECRET = process.env.CLOUDINARY_API_SECRET;
+const CUSTOMER_TOKEN_TTL = 30 * 24 * 60 * 60; // 30 dias — cliente espera continuar logado ao voltar
 
 if (!JWT_SECRET || !ADMIN_PASSWORD_HASH) {
   console.error(
@@ -50,6 +51,20 @@ function checkRateLimit(ip) {
   return entry.count <= 8; // máx. 8 tentativas a cada 10 minutos por IP
 }
 
+// Rate limit isolado para clientes — um ataque de força bruta no login de
+// clientes não deve consumir/afetar o limite do login do admin, e vice-versa.
+const customerLoginAttempts = new Map();
+function checkCustomerRateLimit(ip) {
+  const now = Date.now();
+  const entry = customerLoginAttempts.get(ip);
+  if (!entry || now > entry.resetAt) {
+    customerLoginAttempts.set(ip, { count: 1, resetAt: now + 10 * 60 * 1000 });
+    return true;
+  }
+  entry.count++;
+  return entry.count <= 8;
+}
+
 function json(res, status, data) {
   res.writeHead(status, {
     "Content-Type": "application/json; charset=utf-8",
@@ -69,6 +84,35 @@ function requireAuth(req, res, next) {
     return;
   }
   next();
+}
+
+function requireCustomerAuth(req, res, next) {
+  const header = req.headers["authorization"] || "";
+  const token = header.startsWith("Bearer ") ? header.slice(7) : null;
+  const payload = auth.verify(token, JWT_SECRET);
+  if (!payload || payload.role !== "customer") {
+    json(res, 401, { error: "Sessão expirada. Faça login novamente." });
+    return;
+  }
+  req.customerId = payload.customerId;
+  next();
+}
+
+// Usado em rotas públicas (como criar pedido) que se comportam diferente
+// quando existe um cliente logado, mas não devem travar se não existir.
+function getOptionalCustomerId(req) {
+  const header = req.headers["authorization"] || "";
+  const token = header.startsWith("Bearer ") ? header.slice(7) : null;
+  const payload = auth.verify(token, JWT_SECRET);
+  return payload && payload.role === "customer" ? payload.customerId : null;
+}
+
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function publicCustomer(c) {
+  // Nunca devolve passwordHash para o navegador.
+  const { passwordHash, ...rest } = c;
+  return rest;
 }
 
 const router = new Router();
@@ -183,10 +227,103 @@ router.post("/api/admin/upload", requireAuth, async (req, res) => {
   }
 });
 
+// ---- Contas de cliente ----
+router.post("/api/customers/signup", async (req, res) => {
+  const { name, email, password, phone } = req.body || {};
+  if (!name || !email || !password) {
+    return json(res, 400, { error: "Nome, e-mail e senha são obrigatórios." });
+  }
+  const cleanEmail = String(email).trim().toLowerCase();
+  if (!EMAIL_REGEX.test(cleanEmail)) {
+    return json(res, 400, { error: "E-mail inválido." });
+  }
+  if (String(password).length < 8) {
+    return json(res, 400, { error: "A senha precisa ter pelo menos 8 caracteres." });
+  }
+  const customers = await store.readJSON("customers.json", []);
+  if (customers.some((c) => c.email === cleanEmail)) {
+    return json(res, 409, { error: "Já existe uma conta com esse e-mail." });
+  }
+  const customer = {
+    id: "cus_" + crypto.randomBytes(6).toString("hex"),
+    name: String(name).trim(),
+    email: cleanEmail,
+    phone: String(phone || "").trim(),
+    address: "",
+    passwordHash: auth.hashPassword(String(password)),
+    createdAt: new Date().toISOString()
+  };
+  customers.push(customer);
+  await store.writeJSON("customers.json", customers);
+  const token = auth.sign({ role: "customer", customerId: customer.id }, JWT_SECRET, CUSTOMER_TOKEN_TTL);
+  json(res, 201, { token, customer: publicCustomer(customer) });
+});
+
+router.post("/api/customers/login", async (req, res) => {
+  const ip = req.socket.remoteAddress || "unknown";
+  if (!checkCustomerRateLimit(ip)) {
+    return json(res, 429, { error: "Muitas tentativas. Aguarde alguns minutos." });
+  }
+  const { email, password } = req.body || {};
+  const cleanEmail = String(email || "").trim().toLowerCase();
+  const customers = await store.readJSON("customers.json", []);
+  const customer = customers.find((c) => c.email === cleanEmail);
+  if (!customer || !auth.verifyPassword(String(password || ""), customer.passwordHash)) {
+    return json(res, 401, { error: "E-mail ou senha incorretos." });
+  }
+  const token = auth.sign({ role: "customer", customerId: customer.id }, JWT_SECRET, CUSTOMER_TOKEN_TTL);
+  json(res, 200, { token, customer: publicCustomer(customer) });
+});
+
+router.get("/api/customers/me", requireCustomerAuth, async (req, res) => {
+  const customers = await store.readJSON("customers.json", []);
+  const customer = customers.find((c) => c.id === req.customerId);
+  if (!customer) return json(res, 404, { error: "Conta não encontrada." });
+  json(res, 200, publicCustomer(customer));
+});
+
+router.put("/api/customers/me", requireCustomerAuth, async (req, res) => {
+  const customers = await store.readJSON("customers.json", []);
+  const idx = customers.findIndex((c) => c.id === req.customerId);
+  if (idx === -1) return json(res, 404, { error: "Conta não encontrada." });
+  const p = req.body || {};
+  if (p.name !== undefined) customers[idx].name = String(p.name).trim();
+  if (p.phone !== undefined) customers[idx].phone = String(p.phone).trim();
+  if (p.address !== undefined) customers[idx].address = String(p.address).trim();
+  await store.writeJSON("customers.json", customers);
+  json(res, 200, publicCustomer(customers[idx]));
+});
+
+router.get("/api/customers/orders", requireCustomerAuth, async (req, res) => {
+  const orders = await store.readJSON("orders.json", []);
+  const mine = orders
+    .filter((o) => o.customerId === req.customerId)
+    .sort((a, b) => new Date(b.date) - new Date(a.date));
+  json(res, 200, mine);
+});
+
 // ---- Pedidos ----
 router.post("/api/orders", async (req, res) => {
   const { customer, items } = req.body || {};
-  if (!customer || !customer.name || !customer.phone || !Array.isArray(items) || items.length === 0) {
+
+  // Se o cliente estiver logado, usamos os dados salvos da conta como
+  // reserva para qualquer campo que não venha preenchido no corpo da
+  // requisição — o padrão "Amazon" de não pedir tudo de novo a cada compra.
+  const customerId = getOptionalCustomerId(req);
+  let savedCustomer = null;
+  if (customerId) {
+    const customers = await store.readJSON("customers.json", []);
+    savedCustomer = customers.find((c) => c.id === customerId) || null;
+  }
+
+  const resolvedCustomer = {
+    name: (customer && customer.name) || (savedCustomer && savedCustomer.name) || "",
+    phone: (customer && customer.phone) || (savedCustomer && savedCustomer.phone) || "",
+    email: (customer && customer.email) || (savedCustomer && savedCustomer.email) || "",
+    address: (customer && customer.address) || (savedCustomer && savedCustomer.address) || ""
+  };
+
+  if (!resolvedCustomer.name || !resolvedCustomer.phone || !Array.isArray(items) || items.length === 0) {
     return json(res, 400, { error: "Dados do pedido incompletos." });
   }
   const products = await store.readJSON("products.json", DEFAULT_PRODUCTS);
@@ -209,11 +346,12 @@ router.post("/api/orders", async (req, res) => {
   const order = {
     id: "ord_" + crypto.randomBytes(6).toString("hex"),
     date: new Date().toISOString(),
+    customerId: customerId || null,
     customer: {
-      name: String(customer.name).trim(),
-      phone: String(customer.phone).trim(),
-      email: String(customer.email || "").trim(),
-      address: String(customer.address || "").trim()
+      name: String(resolvedCustomer.name).trim(),
+      phone: String(resolvedCustomer.phone).trim(),
+      email: String(resolvedCustomer.email || "").trim(),
+      address: String(resolvedCustomer.address || "").trim()
     },
     items: resolvedItems,
     total,

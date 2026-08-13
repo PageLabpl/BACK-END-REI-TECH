@@ -186,6 +186,19 @@
   .field-row{ display:grid; grid-template-columns:1fr 1fr; gap:14px; }
   .field-hint{ font-size:0.76rem; color:var(--muted); margin-top:6px; }
 
+  /* ===== Auth tabs ===== */
+  .auth-tabs{ display:flex; gap:4px; background:#080b14; border:1px solid var(--card-border); border-radius:10px; padding:4px; margin-bottom:22px; }
+  .auth-tab{ flex:1; text-align:center; padding:9px; border-radius:7px; border:none; background:none; color:var(--muted); font-weight:600; font-size:0.88rem; cursor:pointer; transition:background .2s, color .2s; }
+  .auth-tab.active{ background:rgba(77,163,255,0.14); color:var(--blue-soft); }
+  .field-checkbox{ display:flex; align-items:center; gap:9px; margin-bottom:16px; font-size:0.86rem; color:var(--muted); }
+  .field-checkbox input{ width:16px; height:16px; accent-color:var(--blue); }
+  .logged-note{ font-size:0.84rem; color:var(--blue-soft); background:rgba(77,163,255,0.08); border:1px solid rgba(77,163,255,0.25); border-radius:9px; padding:10px 12px; margin-bottom:16px; display:flex; justify-content:space-between; align-items:center; gap:10px; }
+  .logged-note button{ background:none; border:none; color:var(--muted); font-size:0.78rem; text-decoration:underline; cursor:pointer; }
+
+  .account-orders-item{ border:1px solid var(--card-border); border-radius:10px; padding:14px 16px; margin-bottom:10px; }
+  .account-orders-item .row{ display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; }
+  .account-orders-item .items{ font-size:0.84rem; color:var(--muted); }
+
   /* ===== Admin ===== */
   #adminView{ display:none; min-height:100vh; }
   #adminView.show{ display:block; }
@@ -270,6 +283,9 @@
     </nav>
     <div class="nav-right">
       <a class="btn btn-outline" href="https://wa.me/5568988198989" target="_blank" rel="noopener">Fale conosco</a>
+      <div class="icon-btn" id="accountBtn" title="Minha conta">
+        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+      </div>
       <div class="icon-btn" id="cartPill" title="Carrinho">
         <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg>
         <span class="badge-count" id="cartCount">0</span>
@@ -397,6 +413,10 @@
   <div class="modal">
     <div class="modal-head"><h3>Finalizar pedido</h3><button class="modal-close" onclick="closeCheckout()">&times;</button></div>
     <form id="checkoutForm" onsubmit="submitOrder(event)">
+      <div id="checkoutLoggedNote" class="logged-note" style="display:none">
+        <span id="checkoutLoggedText"></span>
+        <button type="button" onclick="customerLogout()">Não sou eu</button>
+      </div>
       <div class="field"><label>Nome completo</label><input type="text" id="ckName" required></div>
       <div class="field"><label>WhatsApp / telefone</label><input type="tel" id="ckPhone" required placeholder="(68) 90000-0000"></div>
       <div class="field"><label>E-mail</label><input type="email" id="ckEmail" required></div>
@@ -408,6 +428,57 @@
       <p style="color:var(--danger,#f87171);margin-bottom:14px" id="checkoutErrorText"></p>
       <button type="button" class="btn btn-solid btn-full" id="checkoutRetryBtn" onclick="retryPayment()">Tentar pagamento novamente</button>
       <button type="button" class="btn btn-outline btn-full" style="margin-top:10px" onclick="closeCheckout()">Fechar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Auth modal (login / cadastro do cliente) -->
+<div class="modal-overlay" id="authOverlay">
+  <div class="modal">
+    <div class="modal-head"><h3 id="authModalTitle">Minha conta</h3><button class="modal-close" onclick="closeAuthModal()">&times;</button></div>
+    <div class="auth-tabs">
+      <button class="auth-tab active" data-tab="login" onclick="switchAuthTab('login')" type="button">Entrar</button>
+      <button class="auth-tab" data-tab="signup" onclick="switchAuthTab('signup')" type="button">Criar conta</button>
+    </div>
+
+    <form id="loginForm" onsubmit="submitCustomerLogin(event)">
+      <div class="field"><label>E-mail</label><input type="email" id="loginEmail" required></div>
+      <div class="field"><label>Senha</label><input type="password" id="loginPassword" required></div>
+      <button type="submit" class="btn btn-solid btn-full" id="loginSubmitBtn">Entrar</button>
+      <p class="field-hint" id="loginError" style="display:none;color:var(--danger)"></p>
+    </form>
+
+    <form id="signupForm" style="display:none" onsubmit="submitCustomerSignup(event)">
+      <div class="field"><label>Nome completo</label><input type="text" id="signupName" required></div>
+      <div class="field"><label>E-mail</label><input type="email" id="signupEmail" required></div>
+      <div class="field"><label>WhatsApp / telefone (opcional)</label><input type="tel" id="signupPhone" placeholder="(68) 90000-0000"></div>
+      <div class="field"><label>Senha</label><input type="password" id="signupPassword" required minlength="8"></div>
+      <div class="field"><label>Confirmar senha</label><input type="password" id="signupPasswordConfirm" required minlength="8"></div>
+      <button type="submit" class="btn btn-solid btn-full" id="signupSubmitBtn">Criar conta</button>
+      <p class="field-hint" id="signupError" style="display:none;color:var(--danger)"></p>
+    </form>
+  </div>
+</div>
+
+<!-- Account modal (dados + histórico de pedidos, cliente logado) -->
+<div class="modal-overlay" id="accountOverlay">
+  <div class="modal modal-wide">
+    <div class="modal-head"><h3>Minha conta</h3><button class="modal-close" onclick="closeAccountModal()">&times;</button></div>
+    <div class="auth-tabs">
+      <button class="auth-tab active" data-tab="profile" onclick="switchAccountTab('profile')" type="button">Meus dados</button>
+      <button class="auth-tab" data-tab="orders" onclick="switchAccountTab('orders')" type="button">Meus pedidos</button>
+    </div>
+
+    <div id="accountProfilePanel">
+      <div class="field"><label>Nome</label><input type="text" id="accName"></div>
+      <div class="field"><label>Telefone</label><input type="tel" id="accPhone"></div>
+      <div class="field"><label>Endereço padrão de entrega</label><textarea id="accAddress"></textarea></div>
+      <button class="btn btn-solid btn-full" onclick="saveAccountProfile()" id="accSaveBtn">Salvar alterações</button>
+      <button class="btn btn-outline btn-full" style="margin-top:10px" onclick="customerLogout()">Sair da conta</button>
+    </div>
+
+    <div id="accountOrdersPanel" style="display:none">
+      <div id="accountOrdersList"><div class="loading-line">Carregando pedidos...</div></div>
     </div>
   </div>
 </div>
@@ -547,6 +618,20 @@ let adminToken = null; // fica só em memória — some ao recarregar a página,
    ============================================================ */
 const CART_STORAGE_KEY = "reitech_cart_v1";
 const PENDING_ORDER_STORAGE_KEY = "reitech_pending_order_v1";
+const CUSTOMER_TOKEN_STORAGE_KEY = "reitech_customer_token_v1";
+
+let customerToken = null;
+let currentCustomer = null; // {id, name, email, phone, address}
+
+function saveCustomerTokenToStorage(token){
+  try{ localStorage.setItem(CUSTOMER_TOKEN_STORAGE_KEY, token); }catch(e){ /* ignore */ }
+}
+function loadCustomerTokenFromStorage(){
+  try{ return localStorage.getItem(CUSTOMER_TOKEN_STORAGE_KEY); }catch(e){ return null; }
+}
+function clearCustomerTokenStorage(){
+  try{ localStorage.removeItem(CUSTOMER_TOKEN_STORAGE_KEY); }catch(e){ /* ignore */ }
+}
 
 function saveCartToStorage(){
   try{ localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(cart)); }catch(e){ /* localStorage indisponível */ }
@@ -586,11 +671,15 @@ function uid(prefix){ return prefix + "_" + Date.now().toString(36) + Math.rando
 
 function money(v){ return "R$" + Number(v).toFixed(2).replace(".", ","); }
 
-async function api(path, { method = "GET", body, auth = false } = {}){
+async function api(path, { method = "GET", body, auth = false, customerAuth = false } = {}){
   const headers = { "Content-Type": "application/json" };
   if(auth){
     if(!adminToken){ throw new Error("Sessão expirada. Faça login novamente."); }
     headers["Authorization"] = "Bearer " + adminToken;
+  }
+  if(customerAuth){
+    if(!customerToken){ throw new Error("Faça login para continuar."); }
+    headers["Authorization"] = "Bearer " + customerToken;
   }
   let res;
   try{
@@ -605,6 +694,10 @@ async function api(path, { method = "GET", body, auth = false } = {}){
   let data = null;
   try{ data = await res.json(); }catch(e){ /* resposta sem corpo */ }
   if(res.status === 401){
+    if(customerAuth){
+      customerLogout(false);
+      throw new Error((data && data.error) || "Sessão expirada. Faça login novamente.");
+    }
     isAdminLoggedIn = false;
     adminToken = null;
     showAdminLogin();
@@ -798,6 +891,195 @@ function closeCart(){
   document.getElementById('cartOverlay').classList.remove('show');
 }
 document.getElementById('cartPill').addEventListener('click', openCart);
+document.getElementById('accountBtn').addEventListener('click', () => {
+  if(currentCustomer){ openAccountModal(); } else { openAuthModal(); }
+});
+
+/* ============================================================
+   CONTA DO CLIENTE (cadastro, login, perfil, histórico)
+   ============================================================ */
+function updateAccountButtonUI(){
+  const btn = document.getElementById('accountBtn');
+  btn.title = currentCustomer ? ("Minha conta — " + currentCustomer.name) : "Entrar / Criar conta";
+}
+
+async function loadCustomerSession(){
+  const token = loadCustomerTokenFromStorage();
+  if(!token) return;
+  customerToken = token;
+  try{
+    currentCustomer = await api("/api/customers/me", { customerAuth: true });
+  }catch(e){
+    // Token inválido/expirado — limpa silenciosamente, sem incomodar o cliente.
+    customerToken = null;
+    currentCustomer = null;
+    clearCustomerTokenStorage();
+  }
+  updateAccountButtonUI();
+}
+
+function openAuthModal(){
+  document.getElementById('authModalTitle').textContent = "Minha conta";
+  switchAuthTab('login');
+  document.getElementById('authOverlay').classList.add('show');
+}
+function closeAuthModal(){
+  document.getElementById('authOverlay').classList.remove('show');
+}
+function switchAuthTab(tab){
+  document.querySelectorAll('#authOverlay .auth-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+  document.getElementById('loginForm').style.display = tab === 'login' ? '' : 'none';
+  document.getElementById('signupForm').style.display = tab === 'signup' ? '' : 'none';
+  document.getElementById('loginError').style.display = 'none';
+  document.getElementById('signupError').style.display = 'none';
+}
+
+async function submitCustomerLogin(e){
+  e.preventDefault();
+  const btn = document.getElementById('loginSubmitBtn');
+  const errEl = document.getElementById('loginError');
+  errEl.style.display = 'none';
+  btn.disabled = true;
+  btn.textContent = "Entrando...";
+  try{
+    const data = await api("/api/customers/login", {
+      method: "POST",
+      body: {
+        email: document.getElementById('loginEmail').value.trim(),
+        password: document.getElementById('loginPassword').value
+      }
+    });
+    customerToken = data.token;
+    currentCustomer = data.customer;
+    saveCustomerTokenToStorage(customerToken);
+    updateAccountButtonUI();
+    closeAuthModal();
+    document.getElementById('loginForm').reset();
+    showToast("Bem-vindo(a) de volta, " + currentCustomer.name + "!");
+  }catch(err){
+    errEl.textContent = err.message;
+    errEl.style.display = 'block';
+  }
+  btn.disabled = false;
+  btn.textContent = "Entrar";
+}
+
+async function submitCustomerSignup(e){
+  e.preventDefault();
+  const btn = document.getElementById('signupSubmitBtn');
+  const errEl = document.getElementById('signupError');
+  errEl.style.display = 'none';
+
+  const password = document.getElementById('signupPassword').value;
+  const confirm = document.getElementById('signupPasswordConfirm').value;
+  if(password !== confirm){
+    errEl.textContent = "As senhas não coincidem.";
+    errEl.style.display = 'block';
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = "Criando conta...";
+  try{
+    const data = await api("/api/customers/signup", {
+      method: "POST",
+      body: {
+        name: document.getElementById('signupName').value.trim(),
+        email: document.getElementById('signupEmail').value.trim(),
+        phone: document.getElementById('signupPhone').value.trim(),
+        password
+      }
+    });
+    customerToken = data.token;
+    currentCustomer = data.customer;
+    saveCustomerTokenToStorage(customerToken);
+    updateAccountButtonUI();
+    closeAuthModal();
+    document.getElementById('signupForm').reset();
+    showToast("Conta criada! Bem-vindo(a), " + currentCustomer.name + ".");
+  }catch(err){
+    errEl.textContent = err.message;
+    errEl.style.display = 'block';
+  }
+  btn.disabled = false;
+  btn.textContent = "Criar conta";
+}
+
+function customerLogout(showMsg){
+  customerToken = null;
+  currentCustomer = null;
+  clearCustomerTokenStorage();
+  updateAccountButtonUI();
+  closeAccountModal();
+  applyLoggedCustomerToCheckout();
+  if(showMsg !== false) showToast("Você saiu da sua conta.");
+}
+
+function openAccountModal(){
+  document.getElementById('accName').value = currentCustomer.name || '';
+  document.getElementById('accPhone').value = currentCustomer.phone || '';
+  document.getElementById('accAddress').value = currentCustomer.address || '';
+  switchAccountTab('profile');
+  document.getElementById('accountOverlay').classList.add('show');
+}
+function closeAccountModal(){
+  document.getElementById('accountOverlay').classList.remove('show');
+}
+function switchAccountTab(tab){
+  document.querySelectorAll('#accountOverlay .auth-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+  document.getElementById('accountProfilePanel').style.display = tab === 'profile' ? '' : 'none';
+  document.getElementById('accountOrdersPanel').style.display = tab === 'orders' ? '' : 'none';
+  if(tab === 'orders') renderAccountOrders();
+}
+
+async function saveAccountProfile(){
+  const btn = document.getElementById('accSaveBtn');
+  btn.disabled = true;
+  btn.textContent = "Salvando...";
+  try{
+    currentCustomer = await api("/api/customers/me", {
+      method: "PUT",
+      customerAuth: true,
+      body: {
+        name: document.getElementById('accName').value.trim(),
+        phone: document.getElementById('accPhone').value.trim(),
+        address: document.getElementById('accAddress').value.trim()
+      }
+    });
+    updateAccountButtonUI();
+    showToast("Dados atualizados.");
+  }catch(err){
+    showToast(err.message);
+  }
+  btn.disabled = false;
+  btn.textContent = "Salvar alterações";
+}
+
+async function renderAccountOrders(){
+  const box = document.getElementById('accountOrdersList');
+  box.innerHTML = `<div class="loading-line">Carregando pedidos...</div>`;
+  let myOrders;
+  try{
+    myOrders = await api("/api/customers/orders", { customerAuth: true });
+  }catch(err){
+    box.innerHTML = `<div class="empty-admin">${escapeHtml(err.message)}</div>`;
+    return;
+  }
+  if(myOrders.length === 0){
+    box.innerHTML = `<div class="empty-admin">Você ainda não fez nenhum pedido.</div>`;
+    return;
+  }
+  box.innerHTML = myOrders.map(o => `
+    <div class="account-orders-item">
+      <div class="row">
+        <strong>${money(o.total)}</strong>
+        <span class="status-pill status-${o.status}">${statusLabel(o.status)}</span>
+      </div>
+      <div class="items">${o.items.map(i => `${i.qty}x ${escapeHtml(i.name)}`).join(', ')}</div>
+      <div class="items" style="margin-top:4px">${formatDate(o.date)} · Pedido #${o.id}</div>
+    </div>
+  `).join('');
+}
 
 /* ============================================================
    CHECKOUT
@@ -807,10 +1089,26 @@ function openCheckout(){
   closeCart();
   document.getElementById('checkoutForm').style.display = '';
   document.getElementById('checkoutErrorBox').style.display = 'none';
+  applyLoggedCustomerToCheckout();
   document.getElementById('checkoutOverlay').classList.add('show');
 }
 function closeCheckout(){
   document.getElementById('checkoutOverlay').classList.remove('show');
+}
+// Se o cliente estiver logado, pré-preenche o formulário com os dados salvos
+// da conta (padrão "Amazon") — ele ainda pode editar antes de confirmar.
+function applyLoggedCustomerToCheckout(){
+  const note = document.getElementById('checkoutLoggedNote');
+  if(currentCustomer){
+    document.getElementById('ckName').value = currentCustomer.name || '';
+    document.getElementById('ckPhone').value = currentCustomer.phone || '';
+    document.getElementById('ckEmail').value = currentCustomer.email || '';
+    document.getElementById('ckAddress').value = currentCustomer.address || '';
+    document.getElementById('checkoutLoggedText').textContent = "Comprando como " + currentCustomer.name;
+    note.style.display = 'flex';
+  }else{
+    note.style.display = 'none';
+  }
 }
 async function submitOrder(e){
   e.preventDefault();
@@ -829,7 +1127,8 @@ async function submitOrder(e){
   let order;
   try{
     // O servidor recalcula o preço real de cada item — o total exibido aqui é só uma estimativa.
-    order = await api("/api/orders", { method: "POST", body: { customer, items } });
+    // Se o cliente estiver logado, o pedido fica vinculado à conta dele automaticamente.
+    order = await api("/api/orders", { method: "POST", body: { customer, items }, customerAuth: !!customerToken });
   }catch(err){
     btn.disabled = false;
     btn.textContent = "Ir para o pagamento";
@@ -1255,6 +1554,7 @@ async function init(){
   await loadProducts();
   renderStorefrontProducts();
   await syncPendingOrderStatus();
+  await loadCustomerSession();
   updateCartCount();
   renderCart();
 
