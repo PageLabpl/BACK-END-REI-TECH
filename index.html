@@ -86,6 +86,10 @@
 
   /* ===== Products ===== */
   .products{ padding:40px 0 20px; }
+  .category-filters{ display:flex; flex-wrap:wrap; gap:10px; margin-bottom:24px; }
+  .cat-chip{ padding:8px 18px; border-radius:999px; border:1px solid var(--card-border); background:transparent; color:var(--muted); font-size:0.85rem; cursor:pointer; transition:all .15s; }
+  .cat-chip:hover{ border-color:var(--blue); color:#fff; }
+  .cat-chip.active{ background:var(--blue); border-color:var(--blue); color:#05070d; font-weight:600; }
   .product-grid{ display:grid; grid-template-columns:repeat(3, 1fr); gap:22px; }
   .empty-state{ text-align:center; padding:60px 20px; color:var(--muted); border:1px dashed var(--card-border); border-radius:var(--radius); }
   .card{ background:linear-gradient(180deg, var(--card), #090d18); border:1px solid var(--card-border); border-radius:var(--radius); padding:22px; display:flex; flex-direction:column; transition:transform .25s, border-color .25s, box-shadow .25s; position:relative; overflow:hidden; }
@@ -316,6 +320,7 @@
         <div><span class="kicker">Catálogo</span><h2>Produtos em destaque</h2></div>
         <p>Produtos próprios e parceiros selecionados, atualizados direto pelo painel da loja.</p>
       </div>
+      <div id="categoryFilters" class="category-filters"></div>
       <div id="productGrid" class="product-grid">
         <div class="loading-line">Carregando produtos...</div>
       </div>
@@ -506,6 +511,7 @@
       <nav class="admin-nav">
         <button data-panel="dashboard" class="active" onclick="switchAdminPanel('dashboard')">Painel geral</button>
         <button data-panel="produtos" onclick="switchAdminPanel('produtos')">Produtos</button>
+        <button data-panel="categorias" onclick="switchAdminPanel('categorias')">Categorias</button>
         <button data-panel="pedidos" onclick="switchAdminPanel('pedidos')">Vendas / Pedidos</button>
         <button data-panel="clientes" onclick="switchAdminPanel('clientes')">Clientes</button>
       </nav>
@@ -529,6 +535,18 @@
           <button class="btn btn-solid" onclick="openProductForm()">+ Novo produto</button>
         </div>
         <div id="adminProductsTable"></div>
+      </section>
+
+      <!-- Categorias -->
+      <section class="admin-panel" id="panel-categorias">
+        <div class="admin-topbar">
+          <h2>Categorias</h2>
+        </div>
+        <form onsubmit="submitNewCategory(event)" style="display:flex; gap:10px; align-items:flex-end; margin-bottom:22px; max-width:420px;">
+          <div class="field" style="flex:1; margin-bottom:0;"><label>Nova categoria</label><input type="text" id="newCategoryName" placeholder="Ex: Impressoras" required></div>
+          <button type="submit" class="btn btn-solid">Adicionar</button>
+        </form>
+        <div id="adminCategoriesTable"></div>
       </section>
 
       <!-- Pedidos -->
@@ -584,6 +602,10 @@
         </div>
         <div class="field"><label>Selo (opcional)</label><input type="text" id="pfBadge" placeholder="Ex: Mais vendido"></div>
       </div>
+      <div class="field"><label>Categoria / setor</label>
+        <select id="pfSection"><option value="">Sem categoria</option></select>
+        <p class="field-hint">Gerencie as categorias disponíveis na aba "Categorias" do menu.</p>
+      </div>
       <div class="field"><label>Status</label>
         <select id="pfActive"><option value="true">Ativo na loja</option><option value="false">Oculto (rascunho)</option></select>
       </div>
@@ -606,6 +628,8 @@ const WHATSAPP_NUMBER = "5568988198989"; // formato: código país + DDD + núme
 
 let products = [];
 let orders = [];
+let categories = []; // seções/departamentos, criados livremente pelo admin
+let activeCategoryFilter = null; // categoryId selecionado na vitrine, ou null = "Todos"
 let cart = []; // {productId, name, price, image, qty}
 let pendingOrder = null; // pedido criado mas ainda não pago — sobrevive a reload/redirecionamento
 let isAdminLoggedIn = false;
@@ -717,6 +741,13 @@ async function loadProducts(){
     showToast(e.message);
   }
 }
+async function loadCategories(){
+  try{
+    categories = await api("/api/categories");
+  }catch(e){
+    categories = [];
+  }
+}
 async function saveProduct(id, data){
   if(id){ return api(`/api/admin/products/${id}`, { method: "PUT", body: data, auth: true }); }
   return api("/api/admin/products", { method: "POST", body: data, auth: true });
@@ -761,11 +792,29 @@ function escapeHtml(str){
 }
 function escapeAttr(str){ return escapeHtml(str); }
 
+function renderCategoryFilters(){
+  const box = document.getElementById('categoryFilters');
+  if(!box) return;
+  if(categories.length === 0){ box.innerHTML = ''; return; }
+  const chips = [{ id: null, name: 'Todos' }, ...categories];
+  box.innerHTML = chips.map(c => {
+    const isActive = activeCategoryFilter === c.id;
+    return `<button type="button" class="cat-chip${isActive ? ' active' : ''}" onclick="filterByCategory(${c.id ? `'${c.id}'` : 'null'})">${escapeHtml(c.name)}</button>`;
+  }).join('');
+}
+function filterByCategory(categoryId){
+  activeCategoryFilter = categoryId;
+  renderCategoryFilters();
+  renderStorefrontProducts();
+}
 function renderStorefrontProducts(){
   const grid = document.getElementById('productGrid');
-  const visible = products.filter(p => p.active !== false);
+  let visible = products.filter(p => p.active !== false);
+  if(activeCategoryFilter){
+    visible = visible.filter(p => p.categoryId === activeCategoryFilter);
+  }
   if(visible.length === 0){
-    grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1">Nenhum produto cadastrado ainda. Acesse a área administrativa para adicionar o primeiro.</div>`;
+    grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1">Nenhum produto encontrado nessa categoria.</div>`;
     return;
   }
   grid.innerHTML = visible.map(p => {
@@ -1282,10 +1331,74 @@ function switchAdminPanel(name){
 async function renderAllAdminPanels(){
   await loadProducts();
   await loadOrders();
+  await loadCategories();
   renderDashboard();
   renderAdminProducts();
   renderAdminOrders();
   renderAdminCustomers();
+  renderAdminCategories();
+}
+
+/* ---- Categories admin ---- */
+function renderAdminCategories(){
+  const box = document.getElementById('adminCategoriesTable');
+  if(!box) return;
+  if(categories.length === 0){ box.innerHTML = `<div class="empty-admin">Nenhuma categoria cadastrada ainda. Use o campo acima para criar a primeira.</div>`; return; }
+  box.innerHTML = `<table><thead><tr><th>Categoria</th><th>Produtos</th><th>Ações</th></tr></thead><tbody>
+    ${categories.map(c => {
+      const count = products.filter(p => p.categoryId === c.id).length;
+      return `<tr>
+        <td>${escapeHtml(c.name)}</td>
+        <td>${count} produto(s)</td>
+        <td class="row-actions">
+          <button class="btn btn-outline btn-sm" onclick="renameCategory('${c.id}')">Renomear</button>
+          <button class="btn btn-danger btn-sm" onclick="deleteCategory('${c.id}')">Excluir</button>
+        </td>
+      </tr>`;
+    }).join('')}
+  </tbody></table>`;
+}
+async function submitNewCategory(e){
+  e.preventDefault();
+  const input = document.getElementById('newCategoryName');
+  const name = input.value.trim();
+  if(!name) return;
+  try{
+    await api("/api/admin/categories", { method: "POST", auth: true, body: { name } });
+    input.value = '';
+    await loadCategories();
+    renderAdminCategories();
+    showToast("Categoria criada.");
+  }catch(err){
+    showToast(err.message);
+  }
+}
+async function renameCategory(id){
+  const current = categories.find(c => c.id === id);
+  if(!current) return;
+  const name = prompt("Novo nome da categoria:", current.name);
+  if(!name || !name.trim() || name.trim() === current.name) return;
+  try{
+    await api("/api/admin/categories/" + id, { method: "PUT", auth: true, body: { name: name.trim() } });
+    await loadCategories();
+    renderAdminCategories();
+    showToast("Categoria atualizada.");
+  }catch(err){
+    showToast(err.message);
+  }
+}
+async function deleteCategory(id){
+  if(!confirm("Excluir esta categoria? Os produtos que a usam ficarão sem categoria.")) return;
+  try{
+    await api("/api/admin/categories/" + id, { method: "DELETE", auth: true });
+    await loadCategories();
+    await loadProducts();
+    renderAdminCategories();
+    renderAdminProducts();
+    showToast("Categoria excluída.");
+  }catch(err){
+    showToast(err.message);
+  }
 }
 
 /* ---- Dashboard ---- */
@@ -1317,13 +1430,15 @@ function renderDashboard(){
 function renderAdminProducts(){
   const box = document.getElementById('adminProductsTable');
   if(products.length === 0){ box.innerHTML = `<div class="empty-admin">Nenhum produto cadastrado. Clique em "+ Novo produto".</div>`; return; }
-  box.innerHTML = `<table><thead><tr><th></th><th>Produto</th><th>Origem</th><th>Preço</th><th>Status</th><th>Ações</th></tr></thead><tbody>
+  box.innerHTML = `<table><thead><tr><th></th><th>Produto</th><th>Origem</th><th>Categoria</th><th>Preço</th><th>Status</th><th>Ações</th></tr></thead><tbody>
     ${products.map(p => {
       const hasPromo = p.promoPrice && Number(p.promoPrice) > 0 && Number(p.promoPrice) < Number(p.price);
+      const sectionName = p.categoryId ? (categories.find(c => c.id === p.categoryId)?.name || '—') : '—';
       return `<tr>
         <td>${p.image ? `<img class="table-thumb" src="${escapeAttr(p.image)}" onerror="this.style.visibility='hidden'">` : `<div class="table-thumb"></div>`}</td>
         <td>${escapeHtml(p.name)}${p.badge ? `<br><span class="promo-badge">${escapeHtml(p.badge)}</span>` : ''}</td>
         <td><span class="cat-badge">${p.category === 'dropship' ? 'Dropshipping' : 'Produto próprio'}</span></td>
+        <td>${escapeHtml(sectionName)}</td>
         <td>${money(hasPromo ? p.promoPrice : p.price)} ${hasPromo ? `<br><span class="price-old" style="font-size:0.76rem">${money(p.price)}</span>` : ''}</td>
         <td>${p.active === false ? '<span class="status-pill status-cancelado">Oculto</span>' : '<span class="status-pill status-entregue">Ativo</span>'}</td>
         <td class="row-actions">
@@ -1338,6 +1453,9 @@ function renderAdminProducts(){
 function openProductForm(id){
   const form = document.getElementById('productForm');
   form.reset();
+  const sectionSelect = document.getElementById('pfSection');
+  sectionSelect.innerHTML = '<option value="">Sem categoria</option>' +
+    categories.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
   if(id){
     const p = products.find(x => x.id === id);
     if(!p) return;
@@ -1352,6 +1470,7 @@ function openProductForm(id){
     document.getElementById('pfPrice').value = p.price;
     document.getElementById('pfPromoPrice').value = p.promoPrice || '';
     document.getElementById('pfCategory').value = p.category || 'proprio';
+    document.getElementById('pfSection').value = p.categoryId || '';
     document.getElementById('pfBadge').value = p.badge || '';
     document.getElementById('pfActive').value = String(p.active !== false);
   }else{
@@ -1410,6 +1529,7 @@ async function submitProductForm(e){
     price: parseFloat(document.getElementById('pfPrice').value),
     promoPrice: promo ? parseFloat(promo) : null,
     category: document.getElementById('pfCategory').value,
+    categoryId: document.getElementById('pfSection').value || null,
     badge: document.getElementById('pfBadge').value.trim(),
     active: document.getElementById('pfActive').value === 'true'
   };
@@ -1552,6 +1672,8 @@ async function init(){
   handlePaymentReturnHash();
 
   await loadProducts();
+  await loadCategories();
+  renderCategoryFilters();
   renderStorefrontProducts();
   await syncPendingOrderStatus();
   await loadCustomerSession();

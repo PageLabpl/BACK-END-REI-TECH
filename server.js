@@ -161,6 +161,7 @@ router.post("/api/admin/products", requireAuth, async (req, res) => {
     price: Number(p.price),
     promoPrice: p.promoPrice ? Number(p.promoPrice) : null,
     category: p.category === "dropship" ? "dropship" : "proprio",
+    categoryId: p.categoryId ? String(p.categoryId) : null,
     badge: String(p.badge || ""),
     active: p.active !== false
   };
@@ -183,6 +184,7 @@ router.put("/api/admin/products/:id", requireAuth, async (req, res) => {
     price: p.price !== undefined ? Number(p.price) : products[idx].price,
     promoPrice: p.promoPrice !== undefined ? (p.promoPrice ? Number(p.promoPrice) : null) : products[idx].promoPrice,
     category: p.category !== undefined ? (p.category === "dropship" ? "dropship" : "proprio") : products[idx].category,
+    categoryId: p.categoryId !== undefined ? (p.categoryId ? String(p.categoryId) : null) : products[idx].categoryId,
     badge: p.badge !== undefined ? String(p.badge) : products[idx].badge,
     active: p.active !== undefined ? Boolean(p.active) : products[idx].active
   };
@@ -196,6 +198,61 @@ router.delete("/api/admin/products/:id", requireAuth, async (req, res) => {
   if (!exists) return json(res, 404, { error: "Produto não encontrado." });
   products = products.filter((x) => x.id !== req.params.id);
   await store.writeJSON("products.json", products);
+  json(res, 200, { deleted: true });
+});
+
+// ---- Categorias (setores/seções de produtos, criadas livremente pelo admin) ----
+router.get("/api/categories", async (req, res) => {
+  const categories = await store.readJSON("categories.json", []);
+  json(res, 200, categories);
+});
+
+router.get("/api/admin/categories", requireAuth, async (req, res) => {
+  const categories = await store.readJSON("categories.json", []);
+  json(res, 200, categories);
+});
+
+router.post("/api/admin/categories", requireAuth, async (req, res) => {
+  const categories = await store.readJSON("categories.json", []);
+  const name = String((req.body || {}).name || "").trim();
+  if (!name) return json(res, 400, { error: "Nome da categoria é obrigatório." });
+  if (categories.some((c) => c.name.toLowerCase() === name.toLowerCase())) {
+    return json(res, 400, { error: "Já existe uma categoria com esse nome." });
+  }
+  const category = { id: "cat_" + crypto.randomBytes(6).toString("hex"), name };
+  categories.push(category);
+  await store.writeJSON("categories.json", categories);
+  json(res, 201, category);
+});
+
+router.put("/api/admin/categories/:id", requireAuth, async (req, res) => {
+  const categories = await store.readJSON("categories.json", []);
+  const idx = categories.findIndex((c) => c.id === req.params.id);
+  if (idx === -1) return json(res, 404, { error: "Categoria não encontrada." });
+  const name = String((req.body || {}).name || "").trim();
+  if (!name) return json(res, 400, { error: "Nome da categoria é obrigatório." });
+  if (categories.some((c) => c.id !== req.params.id && c.name.toLowerCase() === name.toLowerCase())) {
+    return json(res, 400, { error: "Já existe uma categoria com esse nome." });
+  }
+  categories[idx].name = name;
+  await store.writeJSON("categories.json", categories);
+  json(res, 200, categories[idx]);
+});
+
+router.delete("/api/admin/categories/:id", requireAuth, async (req, res) => {
+  let categories = await store.readJSON("categories.json", []);
+  const exists = categories.some((c) => c.id === req.params.id);
+  if (!exists) return json(res, 404, { error: "Categoria não encontrada." });
+  categories = categories.filter((c) => c.id !== req.params.id);
+  await store.writeJSON("categories.json", categories);
+  // Produtos que usavam essa categoria ficam "sem categoria" — nunca sobra uma
+  // referência pra uma categoria que não existe mais.
+  const products = await store.readJSON("products.json", DEFAULT_PRODUCTS);
+  let changed = false;
+  products.forEach((p) => {
+    if (p.categoryId === req.params.id) { p.categoryId = null; changed = true; }
+  });
+  if (changed) await store.writeJSON("products.json", products);
   json(res, 200, { deleted: true });
 });
 
