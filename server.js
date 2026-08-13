@@ -229,6 +229,23 @@ router.get("/api/admin/orders", requireAuth, async (req, res) => {
   json(res, 200, orders);
 });
 
+// Consulta pública e enxuta de um pedido específico. Usada pelo site para
+// descobrir se um pedido pendente já foi pago quando o cliente volta à loja
+// depois de sair da tela de pagamento (sem passar pelo redirecionamento
+// automático). Nunca devolve os dados do cliente — só o essencial.
+router.get("/api/orders/:id", async (req, res) => {
+  const orders = await store.readJSON("orders.json", []);
+  const order = orders.find((o) => o.id === req.params.id);
+  if (!order) return json(res, 404, { error: "Pedido não encontrado." });
+  json(res, 200, {
+    id: order.id,
+    status: order.status,
+    total: order.total,
+    items: order.items,
+    date: order.date
+  });
+});
+
 router.put("/api/admin/orders/:id/status", requireAuth, async (req, res) => {
   const orders = await store.readJSON("orders.json", []);
   const order = orders.find((o) => o.id === req.params.id);
