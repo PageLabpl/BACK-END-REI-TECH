@@ -92,7 +92,7 @@
   .card:hover{ transform:translateY(-6px); border-color:rgba(125,211,252,0.35); box-shadow:0 20px 40px -20px rgba(77,163,255,0.35); }
   .card-tag{ position:absolute; top:18px; right:18px; font-size:0.68rem; font-weight:700; padding:4px 10px; border-radius:999px; background:rgba(34,211,166,0.12); color:var(--success); border:1px solid rgba(34,211,166,0.3); z-index:2; }
   .card-tag.hot{ background:rgba(255,107,107,0.12); color:#ff8f8f; border-color:rgba(255,107,107,0.3); }
-  .product-art{ height:190px; border-radius:10px; margin-bottom:20px; background:#0d1326; display:grid; place-items:center; border:1px solid var(--line); overflow:hidden; }
+  .product-art{ aspect-ratio:4/3; border-radius:10px; margin-bottom:20px; background:#0d1326; display:grid; place-items:center; border:1px solid var(--line); overflow:hidden; }
   .product-art img{ width:100%; height:100%; object-fit:cover; }
   .product-art .fallback{ color:var(--muted); font-size:0.8rem; text-align:center; padding:10px; }
   .card h3{ font-size:1.08rem; font-weight:600; margin-bottom:6px; font-family:'Inter',sans-serif; }
@@ -178,6 +178,15 @@
   .banner-prev{ left:14px; }
   .banner-next{ right:14px; }
   @media (max-width:640px){ .banner-carousel{ aspect-ratio:4/3; } .banner-caption{ padding:16px 18px; } .banner-caption h3{ font-size:1.1rem; } }
+  @media (max-width:420px){
+    .banner-carousel{ aspect-ratio:1/1; border-radius:12px; }
+    .banner-caption{ padding:12px 14px; }
+    .banner-caption h3{ font-size:0.98rem; }
+    .banner-caption p{ font-size:0.8rem; }
+    .banner-nav{ width:30px; height:30px; font-size:1.05rem; }
+    .banner-prev{ left:10px; } .banner-next{ right:10px; }
+    .banner-dots{ bottom:10px; right:14px; }
+  }
   .drawer-head{ padding:22px 24px; border-bottom:1px solid var(--line); display:flex; align-items:center; justify-content:space-between; }
   .drawer-head h3{ font-size:1.1rem; }
   .drawer-close{ cursor:pointer; color:var(--muted); background:none; border:none; font-size:1.4rem; line-height:1; }
@@ -275,7 +284,7 @@
 
   @media (max-width: 900px){
     .nav-links{ display:none; }
-    .product-grid{ grid-template-columns:1fr; }
+    .product-grid{ grid-template-columns:repeat(2, 1fr); gap:16px; }
     .feature-grid{ grid-template-columns:1fr 1fr; }
     .footer-grid{ grid-template-columns:1fr; gap:32px; }
     .hero{ padding:64px 0 40px; }
@@ -287,6 +296,23 @@
     .admin-nav{ flex-direction:row; }
     .admin-main{ padding:22px 18px; }
     .stat-grid{ grid-template-columns:1fr 1fr; }
+    table{ min-width:680px; }
+    thead th, tbody td{ padding:11px 12px; font-size:0.84rem; }
+  }
+  @media (max-width: 560px){
+    .product-grid{ grid-template-columns:1fr; gap:14px; }
+    .product-art{ aspect-ratio:16/10; margin-bottom:14px; }
+    .card{ padding:16px; }
+    .nav{ padding:14px 16px; }
+    .nav-right{ gap:8px; }
+    .nav-right a.btn-outline{ display:none; }
+    .icon-btn{ width:38px; height:38px; }
+    .brand span{ font-size:0.98rem; }
+    .stat-grid{ grid-template-columns:1fr 1fr; gap:12px; }
+    .stat-card{ padding:14px; }
+    .stat-card b{ font-size:1.25rem; }
+    .admin-topbar h2{ font-size:1.2rem; }
+    .modal{ padding:20px; border-radius:14px; }
   }
   @media (prefers-reduced-motion: reduce){ *{ animation:none !important; transition:none !important; } }
 </style>
@@ -311,7 +337,7 @@
       <a href="#contato">Contato</a>
     </nav>
     <div class="nav-right">
-      <a class="btn btn-outline" href="https://wa.me/5568988198989" target="_blank" rel="noopener">Fale conosco</a>
+      <a class="btn btn-outline" href="https://wa.me/5568992186548" target="_blank" rel="noopener">Fale conosco</a>
       <div class="icon-btn" id="accountBtn" title="Minha conta">
         <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
       </div>
@@ -338,7 +364,7 @@
       <p class="lead">Tecnologia que conecta em resultados. Produtos próprios com estoque garantido e itens selecionados sob encomenda, tudo em um só lugar.</p>
       <div class="hero-actions">
         <a href="#produtos" class="btn btn-solid">Ver produtos</a>
-        <a href="https://wa.me/5568988198989" target="_blank" rel="noopener" class="btn btn-whatsapp">
+        <a href="https://wa.me/5568992186548" target="_blank" rel="noopener" class="btn btn-whatsapp">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91c0 1.75.46 3.45 1.32 4.95L2 22l5.29-1.39a9.9 9.9 0 0 0 4.75 1.21h.01c5.46 0 9.91-4.45 9.91-9.91C21.96 6.45 17.5 2 12.04 2zm5.83 14.02c-.24.68-1.4 1.3-1.93 1.34-.5.05-1.02.24-3.4-.71-2.87-1.15-4.7-4.07-4.85-4.26-.14-.19-1.16-1.54-1.16-2.94s.73-2.08 1-2.37c.24-.27.53-.33.71-.33h.5c.16 0 .38-.03.58.44.24.57.8 1.97.87 2.11.07.14.11.3.02.48-.09.19-.13.3-.27.46-.14.16-.29.36-.41.48-.14.14-.28.29-.12.56.16.27.71 1.17 1.53 1.89 1.05.94 1.94 1.23 2.21 1.37.27.14.43.11.59-.07.16-.18.68-.79.86-1.06.18-.27.36-.22.6-.13.24.09 1.53.72 1.79.85.27.14.45.2.51.32.07.11.07.66-.17 1.34z"/></svg>
           Falar no WhatsApp
         </a>
@@ -1967,4 +1993,3 @@ init();
 </html>
 
 
-#t
