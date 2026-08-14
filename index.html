@@ -7,6 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://accounts.google.com/gsi/client" async defer onload="window.__gsiLoaded=true; if(window.__initGoogleSignInIfReady) window.__initGoogleSignInIfReady();"></script>
 <style>
   :root{
     --bg:#05070d; --card:#0b1020; --card-border:#1b2440; --line:#1a2237;
@@ -539,6 +540,11 @@
       <button class="auth-tab" data-tab="signup" onclick="switchAuthTab('signup')" type="button">Criar conta</button>
     </div>
 
+    <div id="googleSignInBtn" style="display:flex; justify-content:center; margin-bottom:18px;"></div>
+    <div id="googleSignInDivider" style="display:none; align-items:center; gap:12px; margin-bottom:18px; color:var(--muted); font-size:0.8rem;">
+      <div style="flex:1; height:1px; background:var(--line)"></div>ou<div style="flex:1; height:1px; background:var(--line)"></div>
+    </div>
+
     <form id="loginForm" onsubmit="submitCustomerLogin(event)">
       <div class="field"><label>E-mail</label><input type="email" id="loginEmail" required></div>
       <div class="field"><label>Senha</label><input type="password" id="loginPassword" required></div>
@@ -762,6 +768,12 @@
    ============================================================ */
 const API_BASE_URL = "https://back-end-rei-tech-1.onrender.com";
 const WHATSAPP_NUMBER = "5568988198989"; // formato: código país + DDD + número
+// Pegue em console.cloud.google.com -> APIs e serviços -> Credenciais -> ID do
+// cliente OAuth 2.0 (tipo "Aplicativo da Web"). Cole aqui o "ID do cliente"
+// (termina em .apps.googleusercontent.com — não é segredo, pode ficar no
+// front-end). Enquanto não configurar, o botão "Continuar com Google" some
+// sozinho e o resto do login continua funcionando normalmente.
+const GOOGLE_CLIENT_ID = "";
 
 let products = [];
 let orders = [];
@@ -1268,6 +1280,43 @@ async function submitCustomerSignup(e){
   }
   btn.disabled = false;
   btn.textContent = "Criar conta";
+}
+
+/* ---- Login com Google (Google Identity Services) ---- */
+// Chamado pelo onload do <script> do Google (ver <head>) assim que a
+// biblioteca termina de carregar. Some sozinho se GOOGLE_CLIENT_ID não foi
+// preenchido, sem quebrar o resto do login.
+window.__initGoogleSignInIfReady = function(){
+  if(!window.__gsiLoaded || typeof google === 'undefined' || !GOOGLE_CLIENT_ID) return;
+  try{
+    google.accounts.id.initialize({
+      client_id: GOOGLE_CLIENT_ID,
+      callback: handleGoogleCredential
+    });
+    const btnBox = document.getElementById('googleSignInBtn');
+    google.accounts.id.renderButton(btnBox, {
+      theme: 'outline', size: 'large', shape: 'pill', width: 300, text: 'continue_with', locale: 'pt-BR'
+    });
+    document.getElementById('googleSignInDivider').style.display = 'flex';
+  }catch(e){
+    console.error("Falha ao iniciar o login com Google:", e);
+  }
+};
+
+async function handleGoogleCredential(response){
+  try{
+    const data = await api("/api/customers/google", { method: "POST", body: { credential: response.credential } });
+    customerToken = data.token;
+    currentCustomer = data.customer;
+    saveCustomerTokenToStorage(customerToken);
+    updateAccountButtonUI();
+    closeAuthModal();
+    showToast("Bem-vindo(a), " + currentCustomer.name + "!");
+  }catch(err){
+    const errEl = document.getElementById('loginError');
+    errEl.textContent = err.message || "Não foi possível entrar com o Google.";
+    errEl.style.display = 'block';
+  }
 }
 
 function customerLogout(showMsg){
@@ -2096,6 +2145,7 @@ async function init(){
   await loadCustomerSession();
   updateCartCount();
   renderCart();
+  window.__initGoogleSignInIfReady(); // cobre o caso do script do Google já ter carregado antes daqui
 
   if(window.location.hash === '#admin'){
     goAdmin();
@@ -2111,3 +2161,5 @@ init();
 
 </body>
 </html>
+
+

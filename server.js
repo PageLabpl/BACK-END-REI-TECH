@@ -20,6 +20,7 @@ const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || `http://localhost:${PORT}
 const CLOUDINARY_CLOUD_NAME = process.env.CLOUDINARY_CLOUD_NAME;
 const CLOUDINARY_API_KEY = process.env.CLOUDINARY_API_KEY;
 const CLOUDINARY_API_SECRET = process.env.CLOUDINARY_API_SECRET;
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID; // login "Continuar com Google" dos clientes
 const CUSTOMER_TOKEN_TTL = 30 * 24 * 60 * 60; // 30 dias — cliente espera continuar logado ao voltar
 
 if (!JWT_SECRET || !ADMIN_PASSWORD_HASH) {
@@ -414,6 +415,61 @@ router.post("/api/customers/login", async (req, res) => {
   }
   const token = auth.sign({ role: "customer", customerId: customer.id }, JWT_SECRET, CUSTOMER_TOKEN_TTL);
   json(res, 200, { token, customer: publicCustomer(customer) });
+});
+
+// Login/cadastro com "Continuar com Google". O navegador manda o credential
+// (um ID token assinado pelo Google) devolvido pelo botão do Google Identity
+// Services. Aqui a gente confirma com o próprio Google que esse token é
+// válido e realmente foi emitido para o nosso GOOGLE_CLIENT_ID, e só então
+// confia no e-mail que ele contém (o Google já garante que é verificado).
+router.post("/api/customers/google", async (req, res) => {
+  if (!GOOGLE_CLIENT_ID) {
+    return json(res, 500, { error: "Login com Google não configurado no servidor (falta GOOGLE_CLIENT_ID)." });
+  }
+  const credential = req.body && req.body.credential;
+  if (!credential) return json(res, 400, { error: "Token do Google ausente." });
+
+  let payload;
+  try {
+    const googleRes = await fetch("https://oauth2.googleapis.com/tokeninfo?id_token=" + encodeURIComponent(credential));
+    payload = await googleRes.json();
+    if (!googleRes.ok || payload.error) throw new Error(payload.error_description || "token inválido");
+  } catch (e) {
+    return json(res, 401, { error: "Não foi possível verificar o login do Google. Tente novamente." });
+  }
+
+  if (payload.aud !== GOOGLE_CLIENT_ID || payload.email_verified !== "true" || !payload.email) {
+    return json(res, 401, { error: "Login do Google inválido para este site." });
+  }
+
+  const cleanEmail = String(payload.email).trim().toLowerCase();
+  const customers = await store.readJSON("customers.json", []);
+  let customer = customers.find((c) => c.email === cleanEmail);
+  let status = 200;
+
+  if (!customer) {
+    customer = {
+      id: "cus_" + crypto.randomBytes(6).toString("hex"),
+      name: String(payload.name || payload.given_name || cleanEmail.split("@")[0]).trim(),
+      email: cleanEmail,
+      phone: "",
+      address: "",
+      passwordHash: null, // conta criada via Google — sem senha própria
+      googleId: payload.sub,
+      createdAt: new Date().toISOString()
+    };
+    customers.push(customer);
+    status = 201;
+    await store.writeJSON("customers.json", customers);
+  } else if (!customer.googleId) {
+    // Conta já existia (cadastro por e-mail/senha) — só vincula ao Google,
+    // já que o e-mail é o mesmo e o Google confirmou que é verificado.
+    customer.googleId = payload.sub;
+    await store.writeJSON("customers.json", customers);
+  }
+
+  const token = auth.sign({ role: "customer", customerId: customer.id }, JWT_SECRET, CUSTOMER_TOKEN_TTL);
+  json(res, status, { token, customer: publicCustomer(customer) });
 });
 
 router.get("/api/customers/me", requireCustomerAuth, async (req, res) => {
