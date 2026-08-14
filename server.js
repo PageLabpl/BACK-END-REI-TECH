@@ -256,6 +256,74 @@ router.delete("/api/admin/categories/:id", requireAuth, async (req, res) => {
   json(res, 200, { deleted: true });
 });
 
+// ---- Banners (carrossel de destaques/promoções na loja) ----
+router.get("/api/banners", async (req, res) => {
+  const banners = await store.readJSON("banners.json", []);
+  json(res, 200, banners.filter((b) => b.active !== false));
+});
+
+router.get("/api/admin/banners", requireAuth, async (req, res) => {
+  const banners = await store.readJSON("banners.json", []);
+  json(res, 200, banners);
+});
+
+router.post("/api/admin/banners", requireAuth, async (req, res) => {
+  const banners = await store.readJSON("banners.json", []);
+  const b = req.body || {};
+  if (!b.image) return json(res, 400, { error: "A imagem do banner é obrigatória." });
+  const banner = {
+    id: "ban_" + crypto.randomBytes(6).toString("hex"),
+    image: String(b.image),
+    title: String(b.title || "").trim(),
+    subtitle: String(b.subtitle || "").trim(),
+    link: String(b.link || "").trim(),
+    active: b.active !== false
+  };
+  banners.push(banner);
+  await store.writeJSON("banners.json", banners);
+  json(res, 201, banner);
+});
+
+// Precisa vir ANTES de "/api/admin/banners/:id" — o roteador é simples e usa a
+// primeira rota que bater na forma do caminho, então uma rota estática
+// registrada depois de uma rota com :id nunca seria alcançada.
+router.put("/api/admin/banners/reorder", requireAuth, async (req, res) => {
+  const { ids } = req.body || {};
+  if (!Array.isArray(ids)) return json(res, 400, { error: "Lista de ids inválida." });
+  const banners = await store.readJSON("banners.json", []);
+  const byId = Object.fromEntries(banners.map((b) => [b.id, b]));
+  const reordered = ids.map((id) => byId[id]).filter(Boolean);
+  banners.forEach((b) => { if (!ids.includes(b.id)) reordered.push(b); });
+  await store.writeJSON("banners.json", reordered);
+  json(res, 200, reordered);
+});
+
+router.put("/api/admin/banners/:id", requireAuth, async (req, res) => {
+  const banners = await store.readJSON("banners.json", []);
+  const idx = banners.findIndex((x) => x.id === req.params.id);
+  if (idx === -1) return json(res, 404, { error: "Banner não encontrado." });
+  const b = req.body || {};
+  banners[idx] = {
+    ...banners[idx],
+    image: b.image !== undefined ? String(b.image) : banners[idx].image,
+    title: b.title !== undefined ? String(b.title).trim() : banners[idx].title,
+    subtitle: b.subtitle !== undefined ? String(b.subtitle).trim() : banners[idx].subtitle,
+    link: b.link !== undefined ? String(b.link).trim() : banners[idx].link,
+    active: b.active !== undefined ? Boolean(b.active) : banners[idx].active
+  };
+  await store.writeJSON("banners.json", banners);
+  json(res, 200, banners[idx]);
+});
+
+router.delete("/api/admin/banners/:id", requireAuth, async (req, res) => {
+  let banners = await store.readJSON("banners.json", []);
+  const exists = banners.some((x) => x.id === req.params.id);
+  if (!exists) return json(res, 404, { error: "Banner não encontrado." });
+  banners = banners.filter((x) => x.id !== req.params.id);
+  await store.writeJSON("banners.json", banners);
+  json(res, 200, { deleted: true });
+});
+
 // ---- Upload de imagem (admin) ----
 // Recebe { imageBase64: "data:image/jpeg;base64,...." } já comprimida pelo navegador
 // e envia para o Cloudinary, que guarda a imagem de forma permanente

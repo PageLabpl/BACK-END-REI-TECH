@@ -161,6 +161,23 @@
   .search-bar input{ width:100%; padding:14px 18px 14px 44px; border-radius:12px; border:1px solid var(--card-border); background:var(--card); color:var(--text); font-size:0.95rem; }
   .search-bar input:focus{ outline:none; border-color:var(--blue); }
   .search-bar svg{ position:absolute; left:16px; top:50%; transform:translateY(-50%); color:var(--muted); pointer-events:none; }
+
+  /* ===== Banner carousel ===== */
+  .banner-carousel{ position:relative; max-width:1200px; margin:0 auto 40px; border-radius:16px; overflow:hidden; aspect-ratio:16/5; background:var(--card); }
+  .banner-track{ display:flex; height:100%; transition:transform .5s ease; }
+  .banner-slide{ min-width:100%; height:100%; position:relative; cursor:pointer; }
+  .banner-slide img{ width:100%; height:100%; object-fit:cover; display:block; }
+  .banner-caption{ position:absolute; left:0; bottom:0; width:100%; padding:24px 32px; background:linear-gradient(transparent, rgba(2,4,10,0.8)); }
+  .banner-caption h3{ font-size:1.4rem; margin-bottom:4px; }
+  .banner-caption p{ color:#e2e8f0; font-size:0.9rem; }
+  .banner-dots{ position:absolute; bottom:14px; right:20px; display:flex; gap:8px; z-index:2; }
+  .banner-dot{ width:8px; height:8px; border-radius:50%; background:rgba(255,255,255,0.4); cursor:pointer; border:none; padding:0; transition:width .2s; }
+  .banner-dot.active{ background:#fff; width:22px; border-radius:4px; }
+  .banner-nav{ position:absolute; top:50%; transform:translateY(-50%); background:rgba(2,4,10,0.5); color:#fff; border:none; width:36px; height:36px; border-radius:50%; font-size:1.3rem; cursor:pointer; display:grid; place-items:center; z-index:2; }
+  .banner-nav:hover{ background:rgba(2,4,10,0.75); }
+  .banner-prev{ left:14px; }
+  .banner-next{ right:14px; }
+  @media (max-width:640px){ .banner-carousel{ aspect-ratio:4/3; } .banner-caption{ padding:16px 18px; } .banner-caption h3{ font-size:1.1rem; } }
   .drawer-head{ padding:22px 24px; border-bottom:1px solid var(--line); display:flex; align-items:center; justify-content:space-between; }
   .drawer-head h3{ font-size:1.1rem; }
   .drawer-close{ cursor:pointer; color:var(--muted); background:none; border:none; font-size:1.4rem; line-height:1; }
@@ -307,6 +324,13 @@
 </header>
 
 <main>
+  <section class="banner-carousel" id="bannerSection" style="display:none">
+    <div class="banner-track" id="bannerTrack"></div>
+    <div class="banner-dots" id="bannerDots"></div>
+    <button class="banner-nav banner-prev" onclick="bannerGo(-1)" aria-label="Banner anterior">&#8249;</button>
+    <button class="banner-nav banner-next" onclick="bannerGo(1)" aria-label="Próximo banner">&#8250;</button>
+  </section>
+
   <section class="hero" id="inicio">
     <div class="wrap">
       <span class="eyebrow"><span class="dot"></span>Novidades toda semana</span>
@@ -533,6 +557,7 @@
         <button data-panel="dashboard" class="active" onclick="switchAdminPanel('dashboard')">Painel geral</button>
         <button data-panel="produtos" onclick="switchAdminPanel('produtos')">Produtos</button>
         <button data-panel="categorias" onclick="switchAdminPanel('categorias')">Categorias</button>
+        <button data-panel="banners" onclick="switchAdminPanel('banners')">Banners</button>
         <button data-panel="pedidos" onclick="switchAdminPanel('pedidos')">Vendas / Pedidos</button>
         <button data-panel="clientes" onclick="switchAdminPanel('clientes')">Clientes</button>
       </nav>
@@ -568,6 +593,15 @@
           <button type="submit" class="btn btn-solid">Adicionar</button>
         </form>
         <div id="adminCategoriesTable"></div>
+      </section>
+
+      <!-- Banners -->
+      <section class="admin-panel" id="panel-banners">
+        <div class="admin-topbar">
+          <h2>Banners</h2>
+          <button class="btn btn-solid" onclick="openBannerForm()">+ Novo banner</button>
+        </div>
+        <div id="adminBannersTable"></div>
       </section>
 
       <!-- Pedidos -->
@@ -635,6 +669,34 @@
   </div>
 </div>
 
+<!-- Banner form modal -->
+<div class="modal-overlay" id="bannerModalOverlay">
+  <div class="modal modal-wide">
+    <div class="modal-head"><h3 id="bannerModalTitle">Novo banner</h3><button class="modal-close" onclick="closeBannerForm()">&times;</button></div>
+    <form id="bannerForm" onsubmit="submitBannerForm(event)">
+      <input type="hidden" id="bnId">
+      <div class="field">
+        <label>Imagem do banner</label>
+        <div style="display:flex; gap:16px; align-items:flex-start; flex-wrap:wrap;">
+          <img id="bnImagePreview" src="" alt="" style="width:140px; height:52px; border-radius:9px; object-fit:cover; background:#080b14; border:1px solid var(--card-border); display:none;">
+          <div style="flex:1; min-width:200px;">
+            <input type="file" id="bnImageFile" accept="image/*" onchange="handleImageUpload(event, 'bnImagePreview', 'bnImage')">
+            <p class="field-hint">Ideal: imagem larga (ex: 1600×500px). Ou cole um link abaixo.</p>
+            <input type="url" id="bnImage" placeholder="https://..." required style="margin-top:8px" oninput="document.getElementById('bnImagePreview').src=this.value; document.getElementById('bnImagePreview').style.display=this.value?'block':'none';">
+          </div>
+        </div>
+      </div>
+      <div class="field"><label>Título (opcional)</label><input type="text" id="bnTitle" placeholder="Ex: Black Friday REI TECH"></div>
+      <div class="field"><label>Subtítulo (opcional)</label><input type="text" id="bnSubtitle" placeholder="Ex: Até 40% off em periféricos selecionados"></div>
+      <div class="field"><label>Link ao clicar (opcional)</label><input type="text" id="bnLink" placeholder="https://... ou #produtos"></div>
+      <div class="field"><label>Status</label>
+        <select id="bnActive"><option value="true">Ativo (aparece no carrossel)</option><option value="false">Oculto</option></select>
+      </div>
+      <button type="submit" class="btn btn-solid btn-full">Salvar banner</button>
+    </form>
+  </div>
+</div>
+
 <div class="toast" id="toast">
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#22d3a6" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
   <span id="toastText">Ok</span>
@@ -650,6 +712,8 @@ const WHATSAPP_NUMBER = "5568988198989"; // formato: código país + DDD + núme
 let products = [];
 let orders = [];
 let categories = []; // seções/departamentos, criados livremente pelo admin
+let banners = []; // banners ativos exibidos no carrossel da loja (público)
+let adminBanners = []; // lista completa (inclusive ocultos) usada só no painel admin
 let activeCategoryFilter = null; // categoryId selecionado no menu, ou null = "Todos"
 let searchQuery = ''; // texto digitado na busca "O que você procura?"
 let cart = []; // {productId, name, price, image, qty}
@@ -770,6 +834,13 @@ async function loadCategories(){
     categories = [];
   }
 }
+async function loadBanners(){
+  try{
+    banners = await api("/api/banners");
+  }catch(e){
+    banners = [];
+  }
+}
 async function saveProduct(id, data){
   if(id){ return api(`/api/admin/products/${id}`, { method: "PUT", body: data, auth: true }); }
   return api("/api/admin/products", { method: "POST", body: data, auth: true });
@@ -813,6 +884,57 @@ function escapeHtml(str){
   return String(str).replace(/[&<>"']/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s]));
 }
 function escapeAttr(str){ return escapeHtml(str); }
+
+let bannerIndex = 0;
+let bannerTimer = null;
+function renderBannerCarousel(){
+  const section = document.getElementById('bannerSection');
+  const track = document.getElementById('bannerTrack');
+  const dots = document.getElementById('bannerDots');
+  if(!section || !track || !dots) return;
+  if(banners.length === 0){
+    section.style.display = 'none';
+    stopBannerAutoplay();
+    return;
+  }
+  if(bannerIndex >= banners.length) bannerIndex = 0;
+  section.style.display = 'block';
+  track.innerHTML = banners.map(b => {
+    const isExternal = /^https?:\/\//.test(b.link || '');
+    const clickHandler = b.link ? `onclick="window.open('${escapeAttr(b.link)}','${isExternal ? '_blank' : '_self'}')"` : '';
+    return `<div class="banner-slide" ${clickHandler}>
+      <img src="${escapeAttr(b.image)}" alt="${escapeAttr(b.title || 'Banner promocional')}">
+      ${(b.title || b.subtitle) ? `<div class="banner-caption">${b.title ? `<h3>${escapeHtml(b.title)}</h3>` : ''}${b.subtitle ? `<p>${escapeHtml(b.subtitle)}</p>` : ''}</div>` : ''}
+    </div>`;
+  }).join('');
+  dots.innerHTML = banners.map((_, i) => `<button type="button" class="banner-dot${i === bannerIndex ? ' active' : ''}" onclick="bannerGoTo(${i})" aria-label="Ir para o banner ${i + 1}"></button>`).join('');
+  updateBannerPosition();
+  startBannerAutoplay();
+}
+function updateBannerPosition(){
+  const track = document.getElementById('bannerTrack');
+  if(track) track.style.transform = `translateX(-${bannerIndex * 100}%)`;
+  document.querySelectorAll('#bannerDots .banner-dot').forEach((d, i) => d.classList.toggle('active', i === bannerIndex));
+}
+function bannerGoTo(i){
+  bannerIndex = i;
+  updateBannerPosition();
+  startBannerAutoplay();
+}
+function bannerGo(delta){
+  if(banners.length === 0) return;
+  bannerIndex = (bannerIndex + delta + banners.length) % banners.length;
+  updateBannerPosition();
+  startBannerAutoplay();
+}
+function startBannerAutoplay(){
+  stopBannerAutoplay();
+  if(banners.length <= 1) return;
+  bannerTimer = setInterval(() => bannerGo(1), 5000); // troca sozinho a cada 5s
+}
+function stopBannerAutoplay(){
+  if(bannerTimer){ clearInterval(bannerTimer); bannerTimer = null; }
+}
 
 function renderCategoryFilters(){
   const box = document.getElementById('categoryDrawerBody');
@@ -1372,11 +1494,13 @@ async function renderAllAdminPanels(){
   await loadProducts();
   await loadOrders();
   await loadCategories();
+  await loadAdminBanners();
   renderDashboard();
   renderAdminProducts();
   renderAdminOrders();
   renderAdminCustomers();
   renderAdminCategories();
+  renderAdminBanners();
 }
 
 /* ---- Categories admin ---- */
@@ -1436,6 +1560,111 @@ async function deleteCategory(id){
     renderAdminCategories();
     renderAdminProducts();
     showToast("Categoria excluída.");
+  }catch(err){
+    showToast(err.message);
+  }
+}
+
+/* ---- Banners admin ---- */
+async function loadAdminBanners(){
+  try{
+    adminBanners = await api("/api/admin/banners", { auth: true });
+  }catch(e){
+    adminBanners = [];
+  }
+}
+function renderAdminBanners(){
+  const box = document.getElementById('adminBannersTable');
+  if(!box) return;
+  if(adminBanners.length === 0){ box.innerHTML = `<div class="empty-admin">Nenhum banner cadastrado. Clique em "+ Novo banner".</div>`; return; }
+  box.innerHTML = `<table><thead><tr><th></th><th>Título</th><th>Status</th><th>Ordem</th><th>Ações</th></tr></thead><tbody>
+    ${adminBanners.map((b, i) => `<tr>
+      <td>${b.image ? `<img class="table-thumb" src="${escapeAttr(b.image)}" onerror="this.style.visibility='hidden'">` : `<div class="table-thumb"></div>`}</td>
+      <td>${escapeHtml(b.title || '(sem título)')}</td>
+      <td>${b.active === false ? '<span class="status-pill status-cancelado">Oculto</span>' : '<span class="status-pill status-entregue">Ativo</span>'}</td>
+      <td class="row-actions">
+        <button class="btn btn-outline btn-sm" ${i === 0 ? 'disabled' : ''} onclick="moveBanner('${b.id}', -1)" title="Mover para cima">&uarr;</button>
+        <button class="btn btn-outline btn-sm" ${i === adminBanners.length - 1 ? 'disabled' : ''} onclick="moveBanner('${b.id}', 1)" title="Mover para baixo">&darr;</button>
+      </td>
+      <td class="row-actions">
+        <button class="btn btn-outline btn-sm" onclick="openBannerForm('${b.id}')">Editar</button>
+        <button class="btn btn-danger btn-sm" onclick="deleteBanner('${b.id}')">Excluir</button>
+      </td>
+    </tr>`).join('')}
+  </tbody></table>`;
+}
+function openBannerForm(id){
+  const form = document.getElementById('bannerForm');
+  form.reset();
+  if(id){
+    const b = adminBanners.find(x => x.id === id);
+    if(!b) return;
+    document.getElementById('bannerModalTitle').textContent = "Editar banner";
+    document.getElementById('bnId').value = b.id;
+    document.getElementById('bnImage').value = b.image || '';
+    const preview = document.getElementById('bnImagePreview');
+    if(b.image){ preview.src = b.image; preview.style.display = 'block'; } else { preview.style.display = 'none'; }
+    document.getElementById('bnTitle').value = b.title || '';
+    document.getElementById('bnSubtitle').value = b.subtitle || '';
+    document.getElementById('bnLink').value = b.link || '';
+    document.getElementById('bnActive').value = String(b.active !== false);
+  }else{
+    document.getElementById('bannerModalTitle').textContent = "Novo banner";
+    document.getElementById('bnId').value = '';
+    document.getElementById('bnActive').value = 'true';
+    document.getElementById('bnImagePreview').style.display = 'none';
+  }
+  document.getElementById('bannerModalOverlay').classList.add('show');
+}
+function closeBannerForm(){
+  document.getElementById('bannerModalOverlay').classList.remove('show');
+}
+async function submitBannerForm(e){
+  e.preventDefault();
+  const id = document.getElementById('bnId').value;
+  const data = {
+    image: document.getElementById('bnImage').value.trim(),
+    title: document.getElementById('bnTitle').value.trim(),
+    subtitle: document.getElementById('bnSubtitle').value.trim(),
+    link: document.getElementById('bnLink').value.trim(),
+    active: document.getElementById('bnActive').value === 'true'
+  };
+  if(!data.image){ showToast("Adicione uma imagem para o banner."); return; }
+  try{
+    if(id){
+      await api("/api/admin/banners/" + id, { method: "PUT", auth: true, body: data });
+    }else{
+      await api("/api/admin/banners", { method: "POST", auth: true, body: data });
+    }
+    await loadAdminBanners();
+    closeBannerForm();
+    renderAdminBanners();
+    showToast("Banner salvo com sucesso.");
+  }catch(err){
+    showToast(err.message);
+  }
+}
+async function deleteBanner(id){
+  if(!confirm("Excluir este banner?")) return;
+  try{
+    await api("/api/admin/banners/" + id, { method: "DELETE", auth: true });
+    await loadAdminBanners();
+    renderAdminBanners();
+    showToast("Banner excluído.");
+  }catch(err){
+    showToast(err.message);
+  }
+}
+async function moveBanner(id, delta){
+  const idx = adminBanners.findIndex(b => b.id === id);
+  if(idx === -1) return;
+  const newIdx = idx + delta;
+  if(newIdx < 0 || newIdx >= adminBanners.length) return;
+  const reordered = [...adminBanners];
+  [reordered[idx], reordered[newIdx]] = [reordered[newIdx], reordered[idx]];
+  try{
+    adminBanners = await api("/api/admin/banners/reorder", { method: "PUT", auth: true, body: { ids: reordered.map(b => b.id) } });
+    renderAdminBanners();
   }catch(err){
     showToast(err.message);
   }
@@ -1525,7 +1754,7 @@ function closeProductForm(){
   document.getElementById('productModalOverlay').classList.remove('show');
 }
 
-function handleImageUpload(e){
+function handleImageUpload(e, previewId = 'pfImagePreview', inputId = 'pfImage'){
   const file = e.target.files[0];
   if(!file) return;
   const reader = new FileReader();
@@ -1540,13 +1769,13 @@ function handleImageUpload(e){
       canvas.width = w; canvas.height = h;
       canvas.getContext('2d').drawImage(img, 0, 0, w, h);
       const dataUrl = canvas.toDataURL('image/jpeg', 0.72);
-      const preview = document.getElementById('pfImagePreview');
+      const preview = document.getElementById(previewId);
       preview.src = dataUrl;
       preview.style.display = 'block';
       showToast("Enviando imagem para o servidor...");
       try{
         const result = await api("/api/admin/upload", { method: "POST", body: { imageBase64: dataUrl }, auth: true });
-        document.getElementById('pfImage').value = result.url;
+        document.getElementById(inputId).value = result.url;
         showToast("Imagem enviada com sucesso.");
       }catch(err){
         showToast(err.message);
@@ -1713,7 +1942,9 @@ async function init(){
 
   await loadProducts();
   await loadCategories();
+  await loadBanners();
   renderCategoryFilters();
+  renderBannerCarousel();
   renderStorefrontProducts();
   await syncPendingOrderStatus();
   await loadCustomerSession();
