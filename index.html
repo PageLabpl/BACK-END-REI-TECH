@@ -86,10 +86,6 @@
 
   /* ===== Products ===== */
   .products{ padding:40px 0 20px; }
-  .category-filters{ display:flex; flex-wrap:wrap; gap:10px; margin-bottom:24px; }
-  .cat-chip{ padding:8px 18px; border-radius:999px; border:1px solid var(--card-border); background:transparent; color:var(--muted); font-size:0.85rem; cursor:pointer; transition:all .15s; }
-  .cat-chip:hover{ border-color:var(--blue); color:#fff; }
-  .cat-chip.active{ background:var(--blue); border-color:var(--blue); color:#05070d; font-weight:600; }
   .product-grid{ display:grid; grid-template-columns:repeat(3, 1fr); gap:22px; }
   .empty-state{ text-align:center; padding:60px 20px; color:var(--muted); border:1px dashed var(--card-border); border-radius:var(--radius); }
   .card{ background:linear-gradient(180deg, var(--card), #090d18); border:1px solid var(--card-border); border-radius:var(--radius); padding:22px; display:flex; flex-direction:column; transition:transform .25s, border-color .25s, box-shadow .25s; position:relative; overflow:hidden; }
@@ -156,6 +152,15 @@
   .overlay.show{ opacity:1; pointer-events:auto; }
   .drawer{ position:fixed; top:0; right:0; height:100%; width:420px; max-width:92vw; background:#090d18; border-left:1px solid var(--card-border); z-index:200; transform:translateX(100%); transition:transform .3s ease; display:flex; flex-direction:column; }
   .drawer.show{ transform:translateX(0); }
+  .drawer-left{ left:0; right:auto; border-left:none; border-right:1px solid var(--card-border); transform:translateX(-100%); }
+  .drawer-left.show{ transform:translateX(0); }
+  .category-list-item{ display:block; width:100%; text-align:left; padding:13px 16px; border-radius:10px; border:none; background:transparent; color:var(--text); font-size:0.95rem; cursor:pointer; transition:background .15s; }
+  .category-list-item:hover{ background:rgba(255,255,255,0.04); }
+  .category-list-item.active{ background:var(--blue); color:#05070d; font-weight:600; }
+  .search-bar{ position:relative; margin-bottom:24px; }
+  .search-bar input{ width:100%; padding:14px 18px 14px 44px; border-radius:12px; border:1px solid var(--card-border); background:var(--card); color:var(--text); font-size:0.95rem; }
+  .search-bar input:focus{ outline:none; border-color:var(--blue); }
+  .search-bar svg{ position:absolute; left:16px; top:50%; transform:translateY(-50%); color:var(--muted); pointer-events:none; }
   .drawer-head{ padding:22px 24px; border-bottom:1px solid var(--line); display:flex; align-items:center; justify-content:space-between; }
   .drawer-head h3{ font-size:1.1rem; }
   .drawer-close{ cursor:pointer; color:var(--muted); background:none; border:none; font-size:1.4rem; line-height:1; }
@@ -275,6 +280,9 @@
 <div id="storefrontView">
 <header>
   <div class="nav wrap">
+    <div class="icon-btn" id="categoryMenuBtn" title="Categorias" onclick="openCategoryMenu()">
+      <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+    </div>
     <div class="brand">
       <div class="mark"><img class="logo-mark-img" alt="REI TECH" width="34" height="34"></div>
       <span>REI TECH</span>
@@ -320,7 +328,10 @@
         <div><span class="kicker">Catálogo</span><h2>Produtos em destaque</h2></div>
         <p>Produtos próprios e parceiros selecionados, atualizados direto pelo painel da loja.</p>
       </div>
-      <div id="categoryFilters" class="category-filters"></div>
+      <div class="search-bar">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input type="search" id="searchInput" placeholder="O que você procura?" oninput="handleSearchInput(this.value)">
+      </div>
       <div id="productGrid" class="product-grid">
         <div class="loading-line">Carregando produtos...</div>
       </div>
@@ -394,6 +405,16 @@
 <a class="whatsapp-float" href="https://wa.me/5568988198989" target="_blank" rel="noopener" title="Falar no WhatsApp">
   <svg width="26" height="26" viewBox="0 0 24 24" fill="#052014"><path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91c0 1.75.46 3.45 1.32 4.95L2 22l5.29-1.39a9.9 9.9 0 0 0 4.75 1.21h.01c5.46 0 9.91-4.45 9.91-9.91C21.96 6.45 17.5 2 12.04 2zm5.83 14.02c-.24.68-1.4 1.3-1.93 1.34-.5.05-1.02.24-3.4-.71-2.87-1.15-4.7-4.07-4.85-4.26-.14-.19-1.16-1.54-1.16-2.94s.73-2.08 1-2.37c.24-.27.53-.33.71-.33h.5c.16 0 .38-.03.58.44.24.57.8 1.97.87 2.11.07.14.11.3.02.48-.09.19-.13.3-.27.46-.14.16-.29.36-.41.48-.14.14-.28.29-.12.56.16.27.71 1.17 1.53 1.89 1.05.94 1.94 1.23 2.21 1.37.27.14.43.11.59-.07.16-.18.68-.79.86-1.06.18-.27.36-.22.6-.13.24.09 1.53.72 1.79.85.27.14.45.2.51.32.07.11.07.66-.17 1.34z"/></svg>
 </a>
+
+<!-- Category menu drawer -->
+<div class="overlay" id="categoryOverlay" onclick="closeCategoryMenu()"></div>
+<div class="drawer drawer-left" id="categoryDrawer">
+  <div class="drawer-head">
+    <h3>Categorias</h3>
+    <button class="drawer-close" onclick="closeCategoryMenu()">&times;</button>
+  </div>
+  <div class="drawer-body" id="categoryDrawerBody"></div>
+</div>
 
 <!-- Cart drawer -->
 <div class="overlay" id="cartOverlay" onclick="closeCart()"></div>
@@ -629,7 +650,8 @@ const WHATSAPP_NUMBER = "5568988198989"; // formato: código país + DDD + núme
 let products = [];
 let orders = [];
 let categories = []; // seções/departamentos, criados livremente pelo admin
-let activeCategoryFilter = null; // categoryId selecionado na vitrine, ou null = "Todos"
+let activeCategoryFilter = null; // categoryId selecionado no menu, ou null = "Todos"
+let searchQuery = ''; // texto digitado na busca "O que você procura?"
 let cart = []; // {productId, name, price, image, qty}
 let pendingOrder = null; // pedido criado mas ainda não pago — sobrevive a reload/redirecionamento
 let isAdminLoggedIn = false;
@@ -793,18 +815,30 @@ function escapeHtml(str){
 function escapeAttr(str){ return escapeHtml(str); }
 
 function renderCategoryFilters(){
-  const box = document.getElementById('categoryFilters');
+  const box = document.getElementById('categoryDrawerBody');
   if(!box) return;
-  if(categories.length === 0){ box.innerHTML = ''; return; }
-  const chips = [{ id: null, name: 'Todos' }, ...categories];
+  const chips = [{ id: null, name: 'Todos os produtos' }, ...categories];
   box.innerHTML = chips.map(c => {
     const isActive = activeCategoryFilter === c.id;
-    return `<button type="button" class="cat-chip${isActive ? ' active' : ''}" onclick="filterByCategory(${c.id ? `'${c.id}'` : 'null'})">${escapeHtml(c.name)}</button>`;
+    return `<button type="button" class="category-list-item${isActive ? ' active' : ''}" onclick="filterByCategory(${c.id ? `'${c.id}'` : 'null'})">${escapeHtml(c.name)}</button>`;
   }).join('');
+}
+function openCategoryMenu(){
+  document.getElementById('categoryDrawer').classList.add('show');
+  document.getElementById('categoryOverlay').classList.add('show');
+}
+function closeCategoryMenu(){
+  document.getElementById('categoryDrawer').classList.remove('show');
+  document.getElementById('categoryOverlay').classList.remove('show');
 }
 function filterByCategory(categoryId){
   activeCategoryFilter = categoryId;
   renderCategoryFilters();
+  renderStorefrontProducts();
+  closeCategoryMenu();
+}
+function handleSearchInput(value){
+  searchQuery = value.trim().toLowerCase();
   renderStorefrontProducts();
 }
 function renderStorefrontProducts(){
@@ -813,8 +847,14 @@ function renderStorefrontProducts(){
   if(activeCategoryFilter){
     visible = visible.filter(p => p.categoryId === activeCategoryFilter);
   }
+  if(searchQuery){
+    visible = visible.filter(p =>
+      (p.name || '').toLowerCase().includes(searchQuery) ||
+      (p.description || '').toLowerCase().includes(searchQuery)
+    );
+  }
   if(visible.length === 0){
-    grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1">Nenhum produto encontrado nessa categoria.</div>`;
+    grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1">Nenhum produto encontrado${searchQuery ? ` para "${escapeHtml(searchQuery)}"` : ''}.</div>`;
     return;
   }
   grid.innerHTML = visible.map(p => {
