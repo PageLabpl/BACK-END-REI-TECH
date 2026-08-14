@@ -92,15 +92,15 @@
   .card:hover{ transform:translateY(-6px); border-color:rgba(125,211,252,0.35); box-shadow:0 20px 40px -20px rgba(77,163,255,0.35); }
   .card-tag{ position:absolute; top:18px; right:18px; font-size:0.68rem; font-weight:700; padding:4px 10px; border-radius:999px; background:rgba(34,211,166,0.12); color:var(--success); border:1px solid rgba(34,211,166,0.3); z-index:2; }
   .card-tag.hot{ background:rgba(255,107,107,0.12); color:#ff8f8f; border-color:rgba(255,107,107,0.3); }
-  .product-art{ aspect-ratio:4/3; border-radius:10px; margin-bottom:20px; background:#0d1326; display:grid; place-items:center; border:1px solid var(--line); overflow:hidden; padding:10px; }
-  .product-art img{ width:100%; height:100%; object-fit:contain; }
+  .product-art{ border-radius:10px; margin-bottom:20px; background:#0d1326; display:grid; place-items:center; border:1px solid var(--line); overflow:hidden; padding:10px; }
+  .product-art img{ width:100%; height:auto; max-height:min(48vw, 320px); object-fit:contain; }
   .product-art .fallback{ color:var(--muted); font-size:0.8rem; text-align:center; padding:10px; }
   .card h3{ font-size:1.08rem; font-weight:600; margin-bottom:6px; font-family:'Inter',sans-serif; }
   .clickable-title{ cursor:pointer; transition:color .2s; }
   .clickable-title:hover{ color:var(--blue-soft); }
   .detail-grid{ display:grid; grid-template-columns:1fr 1fr; gap:28px; }
-  .detail-art{ aspect-ratio:1/1; border-radius:12px; background:#0d1326; border:1px solid var(--line); display:grid; place-items:center; overflow:hidden; padding:14px; }
-  .detail-art img{ width:100%; height:100%; object-fit:contain; }
+  .detail-art{ border-radius:12px; background:#0d1326; border:1px solid var(--line); display:grid; place-items:center; overflow:hidden; padding:14px; }
+  .detail-art img{ width:100%; height:auto; max-height:min(70vw, 420px); object-fit:contain; }
   .detail-specs{ margin:18px 0; display:flex; flex-direction:column; gap:10px; }
   .detail-specs li{ display:flex; align-items:flex-start; gap:10px; font-size:0.92rem; color:var(--text); }
   .detail-specs .tick{ width:20px; height:20px; border-radius:50%; background:rgba(34,211,166,0.15); color:var(--success); display:grid; place-items:center; flex-shrink:0; font-size:0.65rem; margin-top:1px; }
@@ -310,7 +310,7 @@
   }
   @media (max-width: 560px){
     .product-grid{ grid-template-columns:1fr; gap:14px; }
-    .product-art{ aspect-ratio:16/10; margin-bottom:14px; }
+    .product-art{ margin-bottom:14px; }
     .card{ padding:16px; }
     .nav{ padding:14px 16px; }
     .nav-right{ gap:8px; }
