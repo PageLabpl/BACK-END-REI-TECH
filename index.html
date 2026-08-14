@@ -163,7 +163,7 @@
   .search-bar svg{ position:absolute; left:16px; top:50%; transform:translateY(-50%); color:var(--muted); pointer-events:none; }
 
   /* ===== Banner carousel ===== */
-  .banner-carousel{ position:relative; max-width:1200px; margin:0 auto 40px; border-radius:16px; overflow:hidden; aspect-ratio:16/5; background:var(--card); }
+  .banner-carousel{ position:relative; width:100%; max-width:1200px; margin:0 auto 40px; border-radius:16px; overflow:hidden; aspect-ratio:16/5; background:var(--card); }
   .banner-track{ display:flex; height:100%; transition:transform .5s ease; }
   .banner-slide{ min-width:100%; height:100%; position:relative; cursor:pointer; }
   .banner-slide img{ width:100%; height:100%; object-fit:cover; display:block; }
@@ -177,15 +177,24 @@
   .banner-nav:hover{ background:rgba(2,4,10,0.75); }
   .banner-prev{ left:14px; }
   .banner-next{ right:14px; }
-  @media (max-width:640px){ .banner-carousel{ aspect-ratio:4/3; } .banner-caption{ padding:16px 18px; } .banner-caption h3{ font-size:1.1rem; } }
-  @media (max-width:420px){
-    .banner-carousel{ aspect-ratio:1/1; border-radius:12px; }
-    .banner-caption{ padding:12px 14px; }
-    .banner-caption h3{ font-size:0.98rem; }
+  /* A proporção (aspect-ratio) do banner fica igual em qualquer tela — ele só
+     encolhe junto com a largura do site, sem cortar mais a imagem no celular
+     do que no computador. Só os textos, setas e bolinhas ficam menores. */
+  @media (max-width:640px){
+    .banner-carousel{ border-radius:12px; margin-bottom:28px; }
+    .banner-caption{ padding:14px 16px; }
+    .banner-caption h3{ font-size:1rem; }
     .banner-caption p{ font-size:0.8rem; }
     .banner-nav{ width:30px; height:30px; font-size:1.05rem; }
     .banner-prev{ left:10px; } .banner-next{ right:10px; }
-    .banner-dots{ bottom:10px; right:14px; }
+    .banner-dots{ bottom:10px; right:14px; gap:6px; }
+    .banner-dot{ width:6px; height:6px; }
+    .banner-dot.active{ width:18px; }
+  }
+  @media (max-width:420px){
+    .banner-caption{ padding:10px 12px; }
+    .banner-caption h3{ font-size:0.9rem; }
+    .banner-caption p{ font-size:0.74rem; }
   }
   .drawer-head{ padding:22px 24px; border-bottom:1px solid var(--line); display:flex; align-items:center; justify-content:space-between; }
   .drawer-head h3{ font-size:1.1rem; }
@@ -1993,3 +2002,4 @@ init();
 </html>
 
 
+#t
