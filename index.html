@@ -101,6 +101,13 @@
   .detail-grid{ display:grid; grid-template-columns:1fr 1fr; gap:28px; align-items:start; }
   .detail-art{ border-radius:12px; background:#0d1326; border:1px solid var(--line); display:grid; place-items:center; overflow:hidden; padding:14px; }
   .detail-art img{ width:100%; height:auto; max-height:460px; object-fit:contain; }
+  .detail-thumbs{ display:flex; gap:10px; margin-top:12px; flex-wrap:wrap; }
+  .detail-thumb{ background:#0d1326; border:2px solid var(--card-border); border-radius:8px; padding:5px; cursor:pointer; display:flex; flex-direction:column; align-items:center; gap:4px; width:64px; flex-shrink:0; transition:border-color .2s; }
+  .detail-thumb img{ width:100%; aspect-ratio:1/1; object-fit:contain; border-radius:5px; display:block; }
+  .detail-thumb span{ font-size:0.66rem; color:var(--muted); text-align:center; line-height:1.15; }
+  .detail-thumb.active{ border-color:var(--blue-soft); }
+  .detail-thumb.active span{ color:var(--blue-soft); }
+  .detail-thumb:hover{ border-color:var(--blue-soft); }
   .detail-specs{ margin:18px 0; display:flex; flex-direction:column; gap:10px; }
   .detail-specs li{ display:flex; align-items:flex-start; gap:10px; font-size:0.92rem; color:var(--text); }
   .detail-specs .tick{ width:20px; height:20px; border-radius:50%; background:rgba(34,211,166,0.15); color:var(--success); display:grid; place-items:center; flex-shrink:0; font-size:0.65rem; margin-top:1px; }
@@ -229,6 +236,12 @@
   .field textarea{ resize:vertical; min-height:80px; }
   .field-row{ display:grid; grid-template-columns:1fr 1fr; gap:14px; }
   .field-hint{ font-size:0.76rem; color:var(--muted); margin-top:6px; }
+  .extra-image-row{ display:flex; gap:12px; align-items:center; margin-bottom:10px; padding:10px; border:1px solid var(--card-border); border-radius:10px; }
+  .extra-image-row img{ width:52px; height:52px; border-radius:7px; object-fit:cover; background:#080b14; border:1px solid var(--card-border); flex-shrink:0; }
+  .extra-image-row .extra-image-fields{ flex:1; min-width:140px; display:flex; flex-direction:column; gap:6px; }
+  .extra-image-row .extra-image-fields input[type="text"]{ padding:8px 10px; font-size:0.86rem; }
+  .extra-image-remove{ background:none; border:1px solid var(--card-border); color:var(--muted); width:28px; height:28px; border-radius:50%; cursor:pointer; flex-shrink:0; font-size:1.1rem; line-height:1; }
+  .extra-image-remove:hover{ color:var(--danger,#f87171); border-color:var(--danger,#f87171); }
 
   /* ===== Auth tabs ===== */
   .auth-tabs{ display:flex; gap:4px; background:#080b14; border:1px solid var(--card-border); border-radius:10px; padding:4px; margin-bottom:22px; }
@@ -668,7 +681,7 @@
       <div class="field"><label>Nome do produto</label><input type="text" id="pfName" required></div>
       <div class="field"><label>Descrição</label><textarea id="pfDesc" required placeholder="Fale das principais características do produto"></textarea></div>
       <div class="field">
-        <label>Imagem do produto</label>
+        <label>Imagem do produto (capa)</label>
         <div style="display:flex; gap:16px; align-items:flex-start; flex-wrap:wrap;">
           <img id="pfImagePreview" src="" alt="" style="width:84px; height:84px; border-radius:9px; object-fit:cover; background:#080b14; border:1px solid var(--card-border); display:none;">
           <div style="flex:1; min-width:200px;">
@@ -677,6 +690,12 @@
             <input type="url" id="pfImage" placeholder="https://..." style="margin-top:8px" oninput="document.getElementById('pfImagePreview').src=this.value; document.getElementById('pfImagePreview').style.display=this.value?'block':'none';">
           </div>
         </div>
+      </div>
+      <div class="field">
+        <label>Fotos adicionais e cores (opcional)</label>
+        <p class="field-hint" style="margin-top:0">Adicione outros ângulos do produto, ou fotos de cada cor disponível (ex: "Preto", "Branco"). Elas aparecem como opções clicáveis na página do produto, junto com a foto de capa.</p>
+        <div id="pfExtraImages"></div>
+        <button type="button" class="btn btn-outline" style="margin-top:4px" onclick="addExtraImageRow()">+ Adicionar foto</button>
       </div>
       <div class="field-row">
         <div class="field"><label>Preço (R$)</label><input type="number" step="0.01" min="0" id="pfPrice" required></div>
@@ -1447,10 +1466,29 @@ function openProductDetail(id){
   const displayPrice = hasPromo ? p.promoPrice : p.price;
   const shipNote = p.category === 'dropship' ? 'Envio pelo fornecedor · até 20 dias úteis' : 'Envio rápido · até 3 dias úteis';
   const specs = p.specs || [];
+  // Galeria: foto principal + fotos extras/cores cadastradas no admin.
+  const gallery = [{ url: p.image || '', color: '' }, ...(p.images || [])].filter(g => g.url);
+  window._detailGallery = gallery;
+  const mainArtHtml = gallery.length
+    ? `<img src="${escapeAttr(gallery[0].url)}" alt="${escapeAttr(p.name)}" id="detailMainImg" onerror="this.parentElement.innerHTML='<div class=\\'fallback\\'>Imagem indisponível</div>'">`
+    : `<div class="fallback">Sem imagem<br>cadastrada</div>`;
+  const thumbsHtml = gallery.length > 1 ? `
+    <div class="detail-thumbs">
+      ${gallery.map((g, i) => `
+        <button type="button" class="detail-thumb${i === 0 ? ' active' : ''}" onclick="selectDetailImage(${i})">
+          <img src="${escapeAttr(g.url)}" alt="${escapeAttr(g.color || ('Foto ' + (i + 1)))}">
+          <span>${g.color ? escapeHtml(g.color) : ('Foto ' + (i + 1))}</span>
+        </button>
+      `).join('')}
+    </div>
+  ` : '';
   document.getElementById('productDetailContent').innerHTML = `
     <div class="modal-head"><h3>${escapeHtml(p.name)}</h3><button class="modal-close" onclick="closeProductDetail()">&times;</button></div>
     <div class="detail-grid">
-      <div class="detail-art">${productArtHtml(p)}</div>
+      <div>
+        <div class="detail-art" id="detailMainArt">${mainArtHtml}</div>
+        ${thumbsHtml}
+      </div>
       <div>
         ${p.badge ? `<span class="card-tag" style="position:static; display:inline-block; margin-bottom:12px;">${escapeHtml(p.badge)}</span>` : ''}
         <p style="color:var(--muted); font-size:0.96rem; margin-bottom:6px;">${escapeHtml(p.description || '')}</p>
@@ -1468,6 +1506,14 @@ function openProductDetail(id){
     </div>
   `;
   document.getElementById('productDetailOverlay').classList.add('show');
+}
+function selectDetailImage(idx){
+  const gallery = window._detailGallery || [];
+  const g = gallery[idx];
+  if(!g) return;
+  const img = document.getElementById('detailMainImg');
+  if(img) img.src = g.url;
+  document.querySelectorAll('.detail-thumb').forEach((btn, i) => btn.classList.toggle('active', i === idx));
 }
 function closeProductDetail(){
   document.getElementById('productDetailOverlay').classList.remove('show');
@@ -1777,11 +1823,15 @@ function openProductForm(id){
     document.getElementById('pfSection').value = p.categoryId || '';
     document.getElementById('pfBadge').value = p.badge || '';
     document.getElementById('pfActive').value = String(p.active !== false);
+    pfExtraImagesState = (p.images || []).map(i => ({ url: i.url || '', color: i.color || '' }));
+    renderExtraImagesRows();
   }else{
     document.getElementById('productModalTitle').textContent = "Novo produto";
     document.getElementById('pfId').value = '';
     document.getElementById('pfActive').value = 'true';
     document.getElementById('pfImagePreview').style.display = 'none';
+    pfExtraImagesState = [];
+    renderExtraImagesRows();
   }
   document.getElementById('productModalOverlay').classList.add('show');
 }
@@ -1789,36 +1839,96 @@ function closeProductForm(){
   document.getElementById('productModalOverlay').classList.remove('show');
 }
 
-function handleImageUpload(e, previewId = 'pfImagePreview', inputId = 'pfImage'){
+// Comprime uma foto no navegador antes de enviar (mesma técnica usada em
+// todos os uploads de imagem do admin: produto, fotos extras e banner).
+function compressImageFile(file, maxDim = 900, quality = 0.72){
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const img = new Image();
+      img.onload = () => {
+        let w = img.width, h = img.height;
+        if(w > h && w > maxDim){ h = h * (maxDim / w); w = maxDim; }
+        else if(h > maxDim){ w = w * (maxDim / h); h = maxDim; }
+        const canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      };
+      img.onerror = () => reject(new Error("Não foi possível ler essa imagem."));
+      img.src = ev.target.result;
+    };
+    reader.onerror = () => reject(new Error("Não foi possível ler esse arquivo."));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function handleImageUpload(e, previewId = 'pfImagePreview', inputId = 'pfImage'){
   const file = e.target.files[0];
   if(!file) return;
-  const reader = new FileReader();
-  reader.onload = (ev) => {
-    const img = new Image();
-    img.onload = async () => {
-      const maxDim = 900;
-      let w = img.width, h = img.height;
-      if(w > h && w > maxDim){ h = h * (maxDim / w); w = maxDim; }
-      else if(h > maxDim){ w = w * (maxDim / h); h = maxDim; }
-      const canvas = document.createElement('canvas');
-      canvas.width = w; canvas.height = h;
-      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-      const dataUrl = canvas.toDataURL('image/jpeg', 0.72);
-      const preview = document.getElementById(previewId);
-      preview.src = dataUrl;
-      preview.style.display = 'block';
-      showToast("Enviando imagem para o servidor...");
-      try{
-        const result = await api("/api/admin/upload", { method: "POST", body: { imageBase64: dataUrl }, auth: true });
-        document.getElementById(inputId).value = result.url;
-        showToast("Imagem enviada com sucesso.");
-      }catch(err){
-        showToast(err.message);
-      }
-    };
-    img.src = ev.target.result;
-  };
-  reader.readAsDataURL(file);
+  const preview = document.getElementById(previewId);
+  try{
+    const dataUrl = await compressImageFile(file);
+    preview.src = dataUrl;
+    preview.style.display = 'block';
+    showToast("Enviando imagem para o servidor...");
+    const result = await api("/api/admin/upload", { method: "POST", body: { imageBase64: dataUrl }, auth: true });
+    document.getElementById(inputId).value = result.url;
+    showToast("Imagem enviada com sucesso.");
+  }catch(err){
+    showToast(err.message || "Erro ao enviar imagem.");
+  }
+}
+
+/* ---- Fotos adicionais / cores do produto ---- */
+let pfExtraImagesState = []; // [{url, color}]
+
+function renderExtraImagesRows(){
+  const box = document.getElementById('pfExtraImages');
+  if(!box) return;
+  if(pfExtraImagesState.length === 0){
+    box.innerHTML = '<p class="field-hint" style="margin:0 0 4px">Nenhuma foto adicional ainda.</p>';
+    return;
+  }
+  box.innerHTML = pfExtraImagesState.map((img, idx) => `
+    <div class="extra-image-row">
+      ${img.url ? `<img src="${escapeAttr(img.url)}" alt="">` : `<div style="width:52px;height:52px;border-radius:7px;background:#080b14;border:1px solid var(--card-border);flex-shrink:0"></div>`}
+      <div class="extra-image-fields">
+        <input type="file" accept="image/*" onchange="handleExtraImageUpload(event, ${idx})">
+        <input type="text" placeholder="Nome da cor (opcional, ex: Preto)" value="${escapeAttr(img.color)}" oninput="updateExtraImageColor(${idx}, this.value)">
+      </div>
+      <button type="button" class="extra-image-remove" onclick="removeExtraImageRow(${idx})" title="Remover">&times;</button>
+    </div>
+  `).join('');
+}
+function addExtraImageRow(){
+  pfExtraImagesState.push({ url: '', color: '' });
+  renderExtraImagesRows();
+}
+function removeExtraImageRow(idx){
+  pfExtraImagesState.splice(idx, 1);
+  renderExtraImagesRows();
+}
+function updateExtraImageColor(idx, value){
+  if(pfExtraImagesState[idx]) pfExtraImagesState[idx].color = value;
+}
+async function handleExtraImageUpload(e, idx){
+  const file = e.target.files[0];
+  if(!file || !pfExtraImagesState[idx]) return;
+  try{
+    const dataUrl = await compressImageFile(file);
+    pfExtraImagesState[idx].url = dataUrl; // pré-visualização imediata enquanto envia
+    renderExtraImagesRows();
+    showToast("Enviando imagem para o servidor...");
+    const result = await api("/api/admin/upload", { method: "POST", body: { imageBase64: dataUrl }, auth: true });
+    if(pfExtraImagesState[idx]){
+      pfExtraImagesState[idx].url = result.url;
+      renderExtraImagesRows();
+    }
+    showToast("Imagem enviada com sucesso.");
+  }catch(err){
+    showToast(err.message || "Erro ao enviar imagem.");
+  }
 }
 async function submitProductForm(e){
   e.preventDefault();
@@ -1830,6 +1940,7 @@ async function submitProductForm(e){
     description: document.getElementById('pfDesc').value.trim(),
     specs: specsRaw ? specsRaw.split('\n').map(s => s.trim()).filter(Boolean) : [],
     image: document.getElementById('pfImage').value.trim(),
+    images: pfExtraImagesState.filter(i => i.url && i.url.trim()).map(i => ({ url: i.url.trim(), color: (i.color || '').trim() })),
     price: parseFloat(document.getElementById('pfPrice').value),
     promoPrice: promo ? parseFloat(promo) : null,
     category: document.getElementById('pfCategory').value,
@@ -2000,5 +2111,3 @@ init();
 
 </body>
 </html>
-
-

@@ -115,6 +115,20 @@ function publicCustomer(c) {
   return rest;
 }
 
+// Fotos extras de um produto (outros ângulos e/ou variações de cor). Cada
+// entrada é { url, color } — color fica vazio quando é só mais um ângulo,
+// sem ser uma variação de cor específica.
+function sanitizeProductImages(arr) {
+  if (!Array.isArray(arr)) return [];
+  return arr
+    .map((i) => ({
+      url: String((i && i.url) || "").trim(),
+      color: String((i && i.color) || "").trim()
+    }))
+    .filter((i) => i.url)
+    .slice(0, 8);
+}
+
 const router = new Router();
 
 // ---- Health check ----
@@ -158,6 +172,7 @@ router.post("/api/admin/products", requireAuth, async (req, res) => {
     description: String(p.description || "").trim(),
     specs: Array.isArray(p.specs) ? p.specs : [],
     image: String(p.image || ""),
+    images: sanitizeProductImages(p.images),
     price: Number(p.price),
     promoPrice: p.promoPrice ? Number(p.promoPrice) : null,
     category: p.category === "dropship" ? "dropship" : "proprio",
@@ -181,6 +196,7 @@ router.put("/api/admin/products/:id", requireAuth, async (req, res) => {
     description: p.description !== undefined ? String(p.description).trim() : products[idx].description,
     specs: Array.isArray(p.specs) ? p.specs : products[idx].specs,
     image: p.image !== undefined ? String(p.image) : products[idx].image,
+    images: p.images !== undefined ? sanitizeProductImages(p.images) : (products[idx].images || []),
     price: p.price !== undefined ? Number(p.price) : products[idx].price,
     promoPrice: p.promoPrice !== undefined ? (p.promoPrice ? Number(p.promoPrice) : null) : products[idx].promoPrice,
     category: p.category !== undefined ? (p.category === "dropship" ? "dropship" : "proprio") : products[idx].category,
