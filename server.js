@@ -109,11 +109,64 @@ function getOptionalCustomerId(req) {
 }
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const UF_REGEX = /^[A-Z]{2}$/;
 
 function publicCustomer(c) {
   // Nunca devolve passwordHash para o navegador.
   const { passwordHash, ...rest } = c;
   return rest;
+}
+
+// Endereço estruturado (não é mais um campo de texto livre). "complement"
+// é o único campo opcional — todos os outros são obrigatórios para fechar
+// um pedido, já que sem eles a entrega não tem como acontecer.
+const EMPTY_ADDRESS = { cep: "", street: "", number: "", complement: "", neighborhood: "", city: "", state: "" };
+
+function normalizeAddressInput(raw) {
+  const a = raw && typeof raw === "object" ? raw : {};
+  return {
+    cep: String(a.cep || "").replace(/\D/g, "").slice(0, 8),
+    street: String(a.street || "").trim(),
+    number: String(a.number || "").trim(),
+    complement: String(a.complement || "").trim(),
+    neighborhood: String(a.neighborhood || "").trim(),
+    city: String(a.city || "").trim(),
+    state: String(a.state || "").trim().toUpperCase()
+  };
+}
+
+function addressValidationError(addr) {
+  if (addr.cep.length !== 8) return "CEP inválido — deve ter 8 dígitos.";
+  if (!addr.street) return "Rua é obrigatória.";
+  if (!addr.number) return "Número é obrigatório.";
+  if (!addr.neighborhood) return "Bairro é obrigatório.";
+  if (!addr.city) return "Cidade é obrigatória.";
+  if (!UF_REGEX.test(addr.state)) return "Estado (UF) inválido — use a sigla com 2 letras, ex: AC.";
+  return null;
+}
+
+function addressToString(addr) {
+  if (!addr || typeof addr !== "object") return "";
+  const parts = [];
+  if (addr.street) parts.push(addr.street + (addr.number ? ", " + addr.number : ""));
+  if (addr.complement) parts.push(addr.complement);
+  if (addr.neighborhood) parts.push(addr.neighborhood);
+  if (addr.city || addr.state) parts.push([addr.city, addr.state].filter(Boolean).join("/"));
+  if (addr.cep) parts.push("CEP " + addr.cep.replace(/(\d{5})(\d{3})/, "$1-$2"));
+  return parts.join(" - ");
+}
+
+// Junta o endereço enviado no pedido com o que já está salvo na conta,
+// campo por campo (não é tudo-ou-nada) — assim, se o cliente só corrigir o
+// número no checkout, o resto continua vindo do que ele já tinha salvo.
+function mergeAddress(bodyAddr, savedAddr) {
+  const body = normalizeAddressInput(bodyAddr);
+  const saved = normalizeAddressInput(savedAddr);
+  const merged = {};
+  for (const key of Object.keys(EMPTY_ADDRESS)) {
+    merged[key] = body[key] || saved[key] || "";
+  }
+  return merged;
 }
 
 // Fotos extras de um produto (outros ângulos e/ou variações de cor). Cada
@@ -407,7 +460,7 @@ router.post("/api/admin/upload", requireAuth, async (req, res) => {
 
 // ---- Contas de cliente ----
 router.post("/api/customers/signup", async (req, res) => {
-  const { name, email, password, phone } = req.body || {};
+  const { name, email, password, phone, address } = req.body || {};
   if (!name || !email || !password) {
     return json(res, 400, { error: "Nome, e-mail e senha são obrigatórios." });
   }
@@ -418,6 +471,10 @@ router.post("/api/customers/signup", async (req, res) => {
   if (String(password).length < 8) {
     return json(res, 400, { error: "A senha precisa ter pelo menos 8 caracteres." });
   }
+  const cleanAddress = normalizeAddressInput(address);
+  const addressError = addressValidationError(cleanAddress);
+  if (addressError) return json(res, 400, { error: addressError });
+
   const customers = await store.readJSON("customers.json", []);
   if (customers.some((c) => c.email === cleanEmail)) {
     return json(res, 409, { error: "Já existe uma conta com esse e-mail." });
@@ -427,7 +484,7 @@ router.post("/api/customers/signup", async (req, res) => {
     name: String(name).trim(),
     email: cleanEmail,
     phone: String(phone || "").trim(),
-    address: "",
+    address: cleanAddress,
     passwordHash: auth.hashPassword(String(password)),
     createdAt: new Date().toISOString()
   };
@@ -489,7 +546,7 @@ router.post("/api/customers/google", async (req, res) => {
       name: String(payload.name || payload.given_name || cleanEmail.split("@")[0]).trim(),
       email: cleanEmail,
       phone: "",
-      address: "",
+      address: { ...EMPTY_ADDRESS },
       passwordHash: null, // conta criada via Google — sem senha própria
       googleId: payload.sub,
       createdAt: new Date().toISOString()
@@ -522,7 +579,12 @@ router.put("/api/customers/me", requireCustomerAuth, async (req, res) => {
   const p = req.body || {};
   if (p.name !== undefined) customers[idx].name = String(p.name).trim();
   if (p.phone !== undefined) customers[idx].phone = String(p.phone).trim();
-  if (p.address !== undefined) customers[idx].address = String(p.address).trim();
+  if (p.address !== undefined) {
+    const merged = mergeAddress(p.address, customers[idx].address);
+    // Só valida campo-a-campo se algo foi de fato enviado; permite salvar
+    // o perfil mesmo com endereço incompleto (ele será exigido no checkout).
+    customers[idx].address = merged;
+  }
   await store.writeJSON("customers.json", customers);
   json(res, 200, publicCustomer(customers[idx]));
 });
@@ -553,12 +615,14 @@ router.post("/api/orders", async (req, res) => {
     name: (customer && customer.name) || (savedCustomer && savedCustomer.name) || "",
     phone: (customer && customer.phone) || (savedCustomer && savedCustomer.phone) || "",
     email: (customer && customer.email) || (savedCustomer && savedCustomer.email) || "",
-    address: (customer && customer.address) || (savedCustomer && savedCustomer.address) || ""
+    address: mergeAddress(customer && customer.address, savedCustomer && savedCustomer.address)
   };
 
   if (!resolvedCustomer.name || !resolvedCustomer.phone || !Array.isArray(items) || items.length === 0) {
     return json(res, 400, { error: "Dados do pedido incompletos." });
   }
+  const addressError = addressValidationError(resolvedCustomer.address);
+  if (addressError) return json(res, 400, { error: addressError });
   const products = await store.readJSON("products.json", DEFAULT_PRODUCTS);
   // Recalcula o total no servidor a partir do preço real do produto —
   // nunca confiar no preço enviado pelo navegador.
@@ -584,7 +648,8 @@ router.post("/api/orders", async (req, res) => {
       name: String(resolvedCustomer.name).trim(),
       phone: String(resolvedCustomer.phone).trim(),
       email: String(resolvedCustomer.email || "").trim(),
-      address: String(resolvedCustomer.address || "").trim()
+      address: resolvedCustomer.address,
+      addressText: addressToString(resolvedCustomer.address)
     },
     items: resolvedItems,
     total,
@@ -592,6 +657,23 @@ router.post("/api/orders", async (req, res) => {
   };
   orders.push(order);
   await store.writeJSON("orders.json", orders);
+
+  // Se o endereço usado no pedido for diferente do que estava salvo na conta
+  // (ex: cliente corrigiu o número no checkout), atualiza o perfil também —
+  // assim da próxima vez já vem certo, sem precisar editar de novo depois.
+  if (customerId && savedCustomer) {
+    const savedNorm = normalizeAddressInput(savedCustomer.address);
+    const changed = Object.keys(EMPTY_ADDRESS).some((k) => savedNorm[k] !== resolvedCustomer.address[k]);
+    if (changed) {
+      const customers = await store.readJSON("customers.json", []);
+      const idx = customers.findIndex((c) => c.id === customerId);
+      if (idx > -1) {
+        customers[idx].address = resolvedCustomer.address;
+        await store.writeJSON("customers.json", customers);
+      }
+    }
+  }
+
   json(res, 201, order);
 });
 
