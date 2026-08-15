@@ -632,7 +632,7 @@ router.get("/api/customers/orders", requireCustomerAuth, async (req, res) => {
 
 // ---- Pedidos ----
 router.post("/api/orders", async (req, res) => {
-  const { customer, items } = req.body || {};
+  const { customer, items, shippingAddress } = req.body || {};
 
   // Se o cliente estiver logado, usamos os dados salvos da conta como
   // reserva para qualquer campo que não venha preenchido no corpo da
@@ -656,6 +656,16 @@ router.post("/api/orders", async (req, res) => {
   }
   const addressError = addressValidationError(resolvedCustomer.address);
   if (addressError) return json(res, 400, { error: addressError });
+
+  // Endereço de entrega: se o cliente não mandar um separado (ou mandar
+  // vazio), a entrega é no mesmo endereço acima.
+  const hasSeparateShipping = shippingAddress && Object.values(normalizeAddressInput(shippingAddress)).some(Boolean);
+  const resolvedShippingAddress = hasSeparateShipping
+    ? normalizeAddressInput(shippingAddress)
+    : resolvedCustomer.address;
+  const shippingAddressError = addressValidationError(resolvedShippingAddress);
+  if (shippingAddressError) return json(res, 400, { error: "Endereço de entrega: " + shippingAddressError });
+
   const products = await store.readJSON("products.json", DEFAULT_PRODUCTS);
   // Recalcula o total no servidor a partir do preço real do produto —
   // nunca confiar no preço enviado pelo navegador.
@@ -684,6 +694,8 @@ router.post("/api/orders", async (req, res) => {
       address: resolvedCustomer.address,
       addressText: addressToString(resolvedCustomer.address)
     },
+    shippingAddress: resolvedShippingAddress,
+    shippingAddressText: addressToString(resolvedShippingAddress),
     items: resolvedItems,
     total,
     status: "pendente"

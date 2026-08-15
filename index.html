@@ -236,6 +236,9 @@
   .field input:focus, .field textarea:focus, .field select:focus{ outline:2px solid var(--blue-soft); outline-offset:1px; border-color:transparent; }
   .field textarea{ resize:vertical; min-height:80px; }
   .field-row{ display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+  .field-checkbox{ margin-bottom:14px; }
+  .checkbox-label{ display:flex; align-items:center; gap:9px; font-size:0.86rem; font-weight:500; cursor:pointer; margin-bottom:0; }
+  .checkbox-label input[type="checkbox"]{ width:17px; height:17px; accent-color:var(--blue); cursor:pointer; flex-shrink:0; }
   .field-row-cep{ display:grid; grid-template-columns:160px 1fr; gap:14px; align-items:end; }
   .field-row-3{ display:grid; grid-template-columns:1fr 1fr 90px; gap:14px; }
   .cep-status{ font-size:0.76rem; margin-top:6px; min-height:16px; }
@@ -538,7 +541,7 @@
       <div class="field"><label>Nome completo</label><input type="text" id="ckName" required></div>
       <div class="field"><label>WhatsApp / telefone</label><input type="tel" id="ckPhone" required placeholder="(68) 90000-0000"></div>
       <div class="field"><label>E-mail</label><input type="email" id="ckEmail" required></div>
-      <div class="field"><label>Endereço de entrega</label></div>
+      <div class="field"><label>Endereço</label></div>
       <div class="field-row-cep">
         <div class="field"><label>CEP</label><input type="text" id="ckCep" required inputmode="numeric" maxlength="9" placeholder="00000-000"></div>
         <div class="field" style="margin-bottom:0"><span class="cep-status" id="ckCepStatus"></span></div>
@@ -552,6 +555,31 @@
       <div class="field-row-3">
         <div class="field"><label>Cidade</label><input type="text" id="ckCity" required></div>
         <div class="field"><label>Estado</label><input type="text" id="ckState" required maxlength="2" placeholder="UF" style="text-transform:uppercase"></div>
+      </div>
+
+      <div class="field field-checkbox">
+        <label class="checkbox-label">
+          <input type="checkbox" id="ckSameAddress" checked onchange="toggleShippingAddress()">
+          <span>Entregar neste mesmo endereço</span>
+        </label>
+      </div>
+
+      <div id="ckShipAddressWrap" style="display:none">
+        <div class="field"><label>Endereço de entrega</label></div>
+        <div class="field-row-cep">
+          <div class="field"><label>CEP</label><input type="text" id="ckShipCep" inputmode="numeric" maxlength="9" placeholder="00000-000"></div>
+          <div class="field" style="margin-bottom:0"><span class="cep-status" id="ckShipCepStatus"></span></div>
+        </div>
+        <div class="field"><label>Rua</label><input type="text" id="ckShipStreet"></div>
+        <div class="field-row">
+          <div class="field"><label>Número</label><input type="text" id="ckShipNumber"></div>
+          <div class="field"><label>Complemento (opcional)</label><input type="text" id="ckShipComplement" placeholder="Apto, bloco, referência..."></div>
+        </div>
+        <div class="field"><label>Bairro</label><input type="text" id="ckShipNeighborhood"></div>
+        <div class="field-row-3">
+          <div class="field"><label>Cidade</label><input type="text" id="ckShipCity"></div>
+          <div class="field"><label>Estado</label><input type="text" id="ckShipState" maxlength="2" placeholder="UF" style="text-transform:uppercase"></div>
+        </div>
       </div>
       <button type="submit" class="btn btn-solid btn-full" id="checkoutSubmitBtn">Ir para o pagamento</button>
       <p class="field-hint" style="text-align:center;margin-top:10px">Você será redirecionado ao Mercado Pago para concluir o pagamento com segurança.</p>
@@ -1411,7 +1439,7 @@ async function lookupCep(prefix, cep){
     if(statusEl){ statusEl.textContent = 'Não foi possível buscar o CEP agora — preencha manualmente.'; statusEl.className = 'cep-status error'; }
   }
 }
-['signup','acc','ck'].forEach(setupCepAutoFill);
+['signup','acc','ck','ckShip'].forEach(setupCepAutoFill);
 
 async function submitCustomerSignup(e){
   e.preventDefault();
@@ -1577,10 +1605,21 @@ function openCheckout(){
   document.getElementById('checkoutForm').style.display = '';
   document.getElementById('checkoutErrorBox').style.display = 'none';
   applyLoggedCustomerToCheckout();
+  document.getElementById('ckSameAddress').checked = true;
+  toggleShippingAddress();
   document.getElementById('checkoutOverlay').classList.add('show');
 }
 function closeCheckout(){
   document.getElementById('checkoutOverlay').classList.remove('show');
+}
+function toggleShippingAddress(){
+  const same = document.getElementById('ckSameAddress').checked;
+  const wrap = document.getElementById('ckShipAddressWrap');
+  wrap.style.display = same ? 'none' : '';
+  ['Cep','Street','Number','Complement','Neighborhood','City','State'].forEach((f) => {
+    document.getElementById('ckShip' + f).required = !same && f !== 'Complement';
+  });
+  if(same) fillAddressFields('ckShip', {});
 }
 // Se o cliente estiver logado, pré-preenche o formulário com os dados salvos
 // da conta (padrão "Amazon") — ele ainda pode editar antes de confirmar.
@@ -1603,19 +1642,21 @@ async function submitOrder(e){
   btn.disabled = true;
   btn.textContent = "Enviando...";
 
+  const sameAddress = document.getElementById('ckSameAddress').checked;
   const customer = {
     name: document.getElementById('ckName').value.trim(),
     phone: document.getElementById('ckPhone').value.trim(),
     email: document.getElementById('ckEmail').value.trim(),
     address: readAddressFields('ck')
   };
+  const shippingAddress = sameAddress ? customer.address : readAddressFields('ckShip');
   const items = cart.map(c => ({ productId: c.productId, qty: c.qty }));
 
   let order;
   try{
     // O servidor recalcula o preço real de cada item — o total exibido aqui é só uma estimativa.
     // Se o cliente estiver logado, o pedido fica vinculado à conta dele automaticamente.
-    order = await api("/api/orders", { method: "POST", body: { customer, items }, customerAuth: !!customerToken });
+    order = await api("/api/orders", { method: "POST", body: { customer, items, shippingAddress }, customerAuth: !!customerToken });
   }catch(err){
     btn.disabled = false;
     btn.textContent = "Ir para o pagamento";
@@ -2373,12 +2414,12 @@ function renderAdminOrders(){
   const box = document.getElementById('adminOrdersTable');
   if(orders.length === 0){ box.innerHTML = `<div class="empty-admin">Nenhum pedido registrado ainda.</div>`; return; }
   const sorted = [...orders].sort((a,b)=> new Date(b.date) - new Date(a.date));
-  box.innerHTML = `<table><thead><tr><th>Data</th><th>Cliente</th><th>Contato</th><th>Endereço</th><th>Itens</th><th>Total</th><th>Status</th></tr></thead><tbody>
+  box.innerHTML = `<table><thead><tr><th>Data</th><th>Cliente</th><th>Contato</th><th>Endereço de entrega</th><th>Itens</th><th>Total</th><th>Status</th></tr></thead><tbody>
     ${sorted.map(o => `<tr>
       <td>${formatDate(o.date)}</td>
       <td>${escapeHtml(o.customer.name)}</td>
       <td>${escapeHtml(o.customer.phone)}</td>
-      <td style="max-width:220px">${escapeHtml(o.customer.addressText || '')}</td>
+      <td style="max-width:220px">${escapeHtml(o.shippingAddressText || o.customer.addressText || '')}</td>
       <td>${o.items.map(i => `${i.qty}x ${escapeHtml(i.name)}`).join('<br>')}</td>
       <td>${money(o.total)}</td>
       <td>
