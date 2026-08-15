@@ -109,6 +109,13 @@
   .detail-thumb.active{ border-color:var(--blue-soft); }
   .detail-thumb.active span{ color:var(--blue-soft); }
   .detail-thumb:hover{ border-color:var(--blue-soft); }
+  .detail-video{ margin-top:12px; border-radius:12px; overflow:hidden; background:#0d1326; border:1px solid var(--line); aspect-ratio:16/9; }
+  .detail-video iframe, .detail-video video{ width:100%; height:100%; display:block; border:none; }
+  .color-select{ margin-top:16px; }
+  .color-swatches{ display:flex; flex-wrap:wrap; gap:8px; }
+  .color-swatch{ padding:8px 16px; border-radius:8px; border:1px solid var(--card-border); background:#0d1326; color:var(--text); font-size:0.85rem; cursor:pointer; transition:border-color .15s, background .15s; }
+  .color-swatch:hover{ border-color:var(--blue-soft); }
+  .color-swatch.active{ border-color:var(--blue); background:rgba(77,163,255,0.12); font-weight:600; }
   .detail-specs{ margin:18px 0; display:flex; flex-direction:column; gap:10px; }
   .detail-specs li{ display:flex; align-items:flex-start; gap:10px; font-size:0.92rem; color:var(--text); }
   .detail-specs .tick{ width:20px; height:20px; border-radius:50%; background:rgba(34,211,166,0.15); color:var(--success); display:grid; place-items:center; flex-shrink:0; font-size:0.65rem; margin-top:1px; }
@@ -836,6 +843,11 @@
         <div id="pfExtraImages"></div>
         <button type="button" class="btn btn-outline" style="margin-top:4px" onclick="addExtraImageRow()">+ Adicionar foto</button>
       </div>
+      <div class="field">
+        <label>Vídeo do produto (opcional)</label>
+        <input type="url" id="pfVideo" placeholder="Link do YouTube ou de um vídeo .mp4">
+        <p class="field-hint">Cole o link de um vídeo do YouTube, ou o link direto de um arquivo .mp4 hospedado em algum lugar (ex: Cloudinary). Aparece na página do produto, junto com as fotos.</p>
+      </div>
       <div class="field-row">
         <div class="field"><label>Preço (R$)</label><input type="number" step="0.01" min="0" id="pfPrice" required></div>
         <div class="field"><label>Preço promocional (opcional)</label><input type="number" step="0.01" min="0" id="pfPromoPrice"></div>
@@ -1201,7 +1213,11 @@ function renderStorefrontProducts(){
         ${hasPromo ? `<span class="price-old">${money(p.price)}</span>` : ''}
       </div>
       <div style="display:flex; gap:10px;">
-        <button class="add-btn" onclick="addToCart('${p.id}')">Adicionar ao carrinho</button>
+        ${(p.images || []).some(i => i.color) ? `
+          <button class="add-btn" onclick="openProductDetail('${p.id}')">Escolher opções</button>
+        ` : `
+          <button class="add-btn" onclick="addToCart('${p.id}')">Adicionar ao carrinho</button>
+        `}
         <button class="btn btn-outline btn-sm" onclick="openProductDetail('${p.id}')" title="Ver detalhes" style="flex-shrink:0">Detalhes</button>
       </div>
     </article>`;
@@ -1211,19 +1227,19 @@ function renderStorefrontProducts(){
 /* ============================================================
    CART
    ============================================================ */
-function addToCart(productId){
+function addToCart(productId, color = ''){
   const p = products.find(x => x.id === productId);
   if(!p) return;
   const hasPromo = p.promoPrice && Number(p.promoPrice) > 0 && Number(p.promoPrice) < Number(p.price);
   const price = hasPromo ? Number(p.promoPrice) : Number(p.price);
-  const existing = cart.find(c => c.productId === productId);
+  const existing = cart.find(c => c.productId === productId && (c.color || '') === (color || ''));
   if(existing){ existing.qty++; }
-  else{ cart.push({ productId, name: p.name, price, image: p.image, qty: 1 }); }
+  else{ cart.push({ productId, name: p.name, price, image: p.image, qty: 1, color: color || '' }); }
   invalidatePendingOrder();
   saveCartToStorage();
   updateCartCount();
   renderCart();
-  showToast(p.name + " adicionado ao carrinho");
+  showToast(p.name + (color ? ` (${color})` : '') + " adicionado ao carrinho");
 
   const btn = document.querySelector(`.card[data-id="${productId}"] .add-btn`);
   if(btn){
@@ -1233,18 +1249,18 @@ function addToCart(productId){
     setTimeout(()=>{ btn.textContent = original; btn.classList.remove('added'); }, 1200);
   }
 }
-function changeQty(productId, delta){
-  const item = cart.find(c => c.productId === productId);
+function changeQty(productId, delta, color = ''){
+  const item = cart.find(c => c.productId === productId && (c.color || '') === (color || ''));
   if(!item) return;
   item.qty += delta;
-  if(item.qty <= 0){ cart = cart.filter(c => c.productId !== productId); }
+  if(item.qty <= 0){ cart = cart.filter(c => !(c.productId === productId && (c.color || '') === (color || ''))); }
   invalidatePendingOrder();
   saveCartToStorage();
   updateCartCount();
   renderCart();
 }
-function removeFromCart(productId){
-  cart = cart.filter(c => c.productId !== productId);
+function removeFromCart(productId, color = ''){
+  cart = cart.filter(c => !(c.productId === productId && (c.color || '') === (color || '')));
   invalidatePendingOrder();
   saveCartToStorage();
   updateCartCount();
@@ -1270,13 +1286,14 @@ function renderCart(){
       <img src="${escapeAttr(c.image || '')}" onerror="this.style.display='none'">
       <div class="cart-item-info">
         <h4>${escapeHtml(c.name)}</h4>
+        ${c.color ? `<span style="font-size:0.78rem;color:var(--muted)">Cor: ${escapeHtml(c.color)}</span>` : ''}
         <span class="price">${money(c.price)}</span>
         <div class="qty-row">
-          <button class="qty-btn" onclick="changeQty('${c.productId}', -1)">-</button>
+          <button class="qty-btn" onclick="changeQty('${c.productId}', -1, '${escapeAttr(c.color || '')}')">-</button>
           <span>${c.qty}</span>
-          <button class="qty-btn" onclick="changeQty('${c.productId}', 1)">+</button>
+          <button class="qty-btn" onclick="changeQty('${c.productId}', 1, '${escapeAttr(c.color || '')}')">+</button>
         </div>
-        <span class="remove-link" onclick="removeFromCart('${c.productId}')">Remover</span>
+        <span class="remove-link" onclick="removeFromCart('${c.productId}', '${escapeAttr(c.color || '')}')">Remover</span>
       </div>
     </div>
   `).join('');
@@ -1590,7 +1607,7 @@ async function renderAccountOrders(){
         <strong>${money(o.total)}</strong>
         <span class="status-pill status-${o.status}">${statusLabel(o.status)}</span>
       </div>
-      <div class="items">${o.items.map(i => `${i.qty}x ${escapeHtml(i.name)}`).join(', ')}</div>
+      <div class="items">${o.items.map(i => `${i.qty}x ${escapeHtml(i.name)}${i.color ? ' (' + escapeHtml(i.color) + ')' : ''}`).join(', ')}</div>
       <div class="items" style="margin-top:4px">${formatDate(o.date)} · Pedido #${o.id}</div>
     </div>
   `).join('');
@@ -1650,7 +1667,7 @@ async function submitOrder(e){
     address: readAddressFields('ck')
   };
   const shippingAddress = sameAddress ? customer.address : readAddressFields('ckShip');
-  const items = cart.map(c => ({ productId: c.productId, qty: c.qty }));
+  const items = cart.map(c => ({ productId: c.productId, qty: c.qty, color: c.color || '' }));
 
   let order;
   try{
@@ -1732,6 +1749,9 @@ function openProductDetail(id){
   // Galeria: foto principal + fotos extras/cores cadastradas no admin.
   const gallery = [{ url: p.image || '', color: '' }, ...(p.images || [])].filter(g => g.url);
   window._detailGallery = gallery;
+  const colors = [...new Set(gallery.map(g => g.color).filter(Boolean))];
+  window._detailColors = colors;
+  window._detailSelectedColor = colors.length === 1 ? colors[0] : null;
   const mainArtHtml = gallery.length
     ? `<img src="${escapeAttr(gallery[0].url)}" alt="${escapeAttr(p.name)}" id="detailMainImg" onerror="this.parentElement.innerHTML='<div class=\\'fallback\\'>Imagem indisponível</div>'">`
     : `<div class="fallback">Sem imagem<br>cadastrada</div>`;
@@ -1745,12 +1765,22 @@ function openProductDetail(id){
       `).join('')}
     </div>
   ` : '';
+  const videoHtml = p.video ? videoEmbedHtml(p.video) : '';
+  const colorSelectHtml = colors.length > 0 ? `
+    <div class="color-select">
+      <label style="display:block;font-size:0.85rem;color:var(--muted);margin-bottom:8px;">Cor: <span id="detailSelectedColorLabel">${colors.length === 1 ? escapeHtml(colors[0]) : 'selecione uma opção'}</span></label>
+      <div class="color-swatches">
+        ${colors.map(c => `<button type="button" class="color-swatch${window._detailSelectedColor === c ? ' active' : ''}" onclick="selectDetailColor('${escapeAttr(c)}')">${escapeHtml(c)}</button>`).join('')}
+      </div>
+    </div>
+  ` : '';
   document.getElementById('productDetailContent').innerHTML = `
     <div class="modal-head"><h3>${escapeHtml(p.name)}</h3><button class="modal-close" onclick="closeProductDetail()">&times;</button></div>
     <div class="detail-grid">
       <div>
         <div class="detail-art" id="detailMainArt">${mainArtHtml}</div>
         ${thumbsHtml}
+        ${videoHtml}
       </div>
       <div>
         ${p.badge ? `<span class="card-tag" style="position:static; display:inline-block; margin-bottom:12px;">${escapeHtml(p.badge)}</span>` : ''}
@@ -1764,11 +1794,42 @@ function openProductDetail(id){
           <span class="price">${money(displayPrice)}</span>
           ${hasPromo ? `<span class="price-old">${money(p.price)}</span>` : ''}
         </div>
-        <button class="add-btn btn-full" style="margin-top:14px" onclick="addToCart('${p.id}'); closeProductDetail();">Adicionar ao carrinho</button>
+        ${colorSelectHtml}
+        <button class="add-btn btn-full" style="margin-top:14px" onclick="addToCartFromDetail('${p.id}')">Adicionar ao carrinho</button>
       </div>
     </div>
   `;
   document.getElementById('productDetailOverlay').classList.add('show');
+}
+function videoEmbedHtml(url){
+  if(!url) return '';
+  const yt = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)([\w-]{6,})/);
+  if(yt){
+    return `<div class="detail-video"><iframe src="https://www.youtube.com/embed/${yt[1]}" title="Vídeo do produto" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe></div>`;
+  }
+  const vimeo = url.match(/vimeo\.com\/(\d+)/);
+  if(vimeo){
+    return `<div class="detail-video"><iframe src="https://player.vimeo.com/video/${vimeo[1]}" title="Vídeo do produto" frameborder="0" allow="autoplay; fullscreen; picture-in-picture" allowfullscreen></iframe></div>`;
+  }
+  return `<div class="detail-video"><video src="${escapeAttr(url)}" controls preload="metadata"></video></div>`;
+}
+function selectDetailColor(color){
+  window._detailSelectedColor = color;
+  document.querySelectorAll('.color-swatch').forEach(btn => btn.classList.toggle('active', btn.textContent === color));
+  const label = document.getElementById('detailSelectedColorLabel');
+  if(label) label.textContent = color;
+  const gallery = window._detailGallery || [];
+  const idx = gallery.findIndex(g => g.color === color);
+  if(idx !== -1) selectDetailImage(idx);
+}
+function addToCartFromDetail(id){
+  const colors = window._detailColors || [];
+  if(colors.length > 1 && !window._detailSelectedColor){
+    showToast("Escolha uma cor antes de adicionar ao carrinho.");
+    return;
+  }
+  addToCart(id, window._detailSelectedColor || '');
+  closeProductDetail();
 }
 function selectDetailImage(idx){
   const gallery = window._detailGallery || [];
@@ -2243,6 +2304,7 @@ function openProductForm(id){
     document.getElementById('pfDesc').value = p.description || '';
     document.getElementById('pfImage').value = p.image || '';
     document.getElementById('pfSpecs').value = (p.specs || []).join('\n');
+    document.getElementById('pfVideo').value = p.video || '';
     const preview = document.getElementById('pfImagePreview');
     if(p.image){ preview.src = p.image; preview.style.display = 'block'; } else { preview.style.display = 'none'; }
     document.getElementById('pfPrice').value = p.price;
@@ -2257,6 +2319,7 @@ function openProductForm(id){
   }else{
     document.getElementById('productModalTitle').textContent = "Novo produto";
     document.getElementById('pfId').value = '';
+    document.getElementById('pfVideo').value = '';
     document.getElementById('pfActive').value = 'true';
     document.getElementById('pfImagePreview').style.display = 'none';
     pfExtraImagesState = [];
@@ -2370,6 +2433,7 @@ async function submitProductForm(e){
     specs: specsRaw ? specsRaw.split('\n').map(s => s.trim()).filter(Boolean) : [],
     image: document.getElementById('pfImage').value.trim(),
     images: pfExtraImagesState.filter(i => i.url && i.url.trim()).map(i => ({ url: i.url.trim(), color: (i.color || '').trim() })),
+    video: document.getElementById('pfVideo').value.trim(),
     price: parseFloat(document.getElementById('pfPrice').value),
     cost: document.getElementById('pfCost').value !== '' ? parseFloat(document.getElementById('pfCost').value) : null,
     promoPrice: promo ? parseFloat(promo) : null,
@@ -2420,7 +2484,7 @@ function renderAdminOrders(){
       <td>${escapeHtml(o.customer.name)}</td>
       <td>${escapeHtml(o.customer.phone)}</td>
       <td style="max-width:220px">${escapeHtml(o.shippingAddressText || o.customer.addressText || '')}</td>
-      <td>${o.items.map(i => `${i.qty}x ${escapeHtml(i.name)}`).join('<br>')}</td>
+      <td>${o.items.map(i => `${i.qty}x ${escapeHtml(i.name)}${i.color ? ' (' + escapeHtml(i.color) + ')' : ''}`).join('<br>')}</td>
       <td>${money(o.total)}</td>
       <td>
         <select class="status-select" onchange="updateOrderStatus('${o.id}', this.value)">

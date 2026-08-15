@@ -268,6 +268,7 @@ router.post("/api/admin/products", requireAuth, async (req, res) => {
     specs: Array.isArray(p.specs) ? p.specs : [],
     image: String(p.image || ""),
     images: sanitizeProductImages(p.images),
+    video: String(p.video || "").trim(),
     price: Number(p.price),
     cost: p.cost !== undefined && p.cost !== null && p.cost !== "" ? Number(p.cost) : null,
     promoPrice: p.promoPrice ? Number(p.promoPrice) : null,
@@ -293,6 +294,7 @@ router.put("/api/admin/products/:id", requireAuth, async (req, res) => {
     specs: Array.isArray(p.specs) ? p.specs : products[idx].specs,
     image: p.image !== undefined ? String(p.image) : products[idx].image,
     images: p.images !== undefined ? sanitizeProductImages(p.images) : (products[idx].images || []),
+    video: p.video !== undefined ? String(p.video).trim() : (products[idx].video || ""),
     price: p.price !== undefined ? Number(p.price) : products[idx].price,
     cost: p.cost !== undefined ? (p.cost !== null && p.cost !== "" ? Number(p.cost) : null) : products[idx].cost,
     promoPrice: p.promoPrice !== undefined ? (p.promoPrice ? Number(p.promoPrice) : null) : products[idx].promoPrice,
@@ -686,7 +688,14 @@ router.post("/api/orders", async (req, res) => {
     const unitPrice = hasPromo ? Number(product.promoPrice) : Number(product.price);
     const qty = Math.max(1, parseInt(item.qty, 10) || 1);
     total += unitPrice * qty;
-    resolvedItems.push({ productId: product.id, name: product.name, price: unitPrice, qty, cost: product.cost !== undefined && product.cost !== null ? Number(product.cost) : null });
+    resolvedItems.push({
+      productId: product.id,
+      name: product.name,
+      price: unitPrice,
+      qty,
+      color: String(item.color || "").trim(), // cor escolhida pelo cliente, se o produto tiver variação
+      cost: product.cost !== undefined && product.cost !== null ? Number(product.cost) : null
+    });
   }
   if (resolvedItems.length === 0) return json(res, 400, { error: "Nenhum item válido no pedido." });
 
