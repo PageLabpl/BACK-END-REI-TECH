@@ -10,6 +10,7 @@ const store = require("./lib/store");
 const auth = require("./lib/auth");
 const mercadopago = require("./lib/mercadopago");
 const cloudinary = require("./lib/cloudinary");
+const email = require("./lib/email");
 
 const PORT = process.env.PORT || 3001;
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -20,8 +21,9 @@ const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || `http://localhost:${PORT}
 const CLOUDINARY_CLOUD_NAME = process.env.CLOUDINARY_CLOUD_NAME;
 const CLOUDINARY_API_KEY = process.env.CLOUDINARY_API_KEY;
 const CLOUDINARY_API_SECRET = process.env.CLOUDINARY_API_SECRET;
-const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID; // login "Continuar com Google" dos clientes
-const CUSTOMER_TOKEN_TTL = 30 * 24 * 60 * 60; // 30 dias — cliente espera continuar logado ao voltar
+const RESEND_API_KEY = process.env.RESEND_API_KEY;
+const RESEND_FROM_EMAIL = process.env.RESEND_FROM_EMAIL;
+const STORE_NAME = process.env.STORE_NAME || "REI TECH";
 
 if (!JWT_SECRET || !ADMIN_PASSWORD_HASH) {
   console.error(
@@ -35,35 +37,33 @@ const UPLOADS_DIR = path.join(__dirname, "uploads");
 if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 
 const DEFAULT_PRODUCTS = [
-  { id: "p1", name: "Fone Bluetooth 5.3 Pro", description: "Cancelamento de ruído ativo, até 30h de bateria e conexão dual.", specs: ["Bluetooth 5.3", "Até 30h de bateria", "Cancelamento de ruído ativo"], image: "", price: 299, promoPrice: null, category: "proprio", badge: "Mais vendido", active: true },
-  { id: "p2", name: "Carregador Turbo 30W", description: "Carga rápida USB-C com proteção contra sobrecarga e superaquecimento.", specs: ["Potência de 30W", "Entrada USB-C"], image: "", price: 79, promoPrice: null, category: "proprio", badge: "", active: true }
+  { id: "p1", name: "Fone Bluetooth 5.3 Pro", description: "Cancelamento de ruído ativo, até 30h de bateria e conexão dual.", specs: ["Bluetooth 5.3", "Até 30h de bateria", "Cancelamento de ruído ativo"], image: "", price: 299, promoPrice: null, category: "proprio", section: "perifericos", badge: "Mais vendido", active: true },
+  { id: "p2", name: "Carregador Turbo 30W", description: "Carga rápida USB-C com proteção contra sobrecarga e superaquecimento.", specs: ["Potência de 30W", "Entrada USB-C"], image: "", price: 79, promoPrice: null, category: "proprio", section: "acessorios", badge: "", active: true }
+];
+
+// Seções padrão (usadas na primeira vez que o site rodar; depois disso o
+// admin pode adicionar/remover seções pelo próprio painel).
+const DEFAULT_SECTIONS = [
+  { id: "informatica", name: "Informática" },
+  { id: "perifericos", name: "Periféricos" },
+  { id: "impressoras", name: "Impressoras" },
+  { id: "seguranca-eletronica", name: "Segurança Eletrônica" },
+  { id: "redes", name: "Redes" },
+  { id: "audio-video", name: "Áudio & Vídeo" },
+  { id: "acessorios", name: "Acessórios" }
 ];
 
 // ---- Rate limiting simples para login (evita força bruta) ----
-const loginAttempts = new Map(); // ip -> { count, resetAt }
-function checkRateLimit(ip) {
+const loginAttempts = new Map(); // "ip:tipo" -> { count, resetAt }
+function checkRateLimit(key, max = 8) {
   const now = Date.now();
-  const entry = loginAttempts.get(ip);
+  const entry = loginAttempts.get(key);
   if (!entry || now > entry.resetAt) {
-    loginAttempts.set(ip, { count: 1, resetAt: now + 10 * 60 * 1000 });
+    loginAttempts.set(key, { count: 1, resetAt: now + 10 * 60 * 1000 });
     return true;
   }
   entry.count++;
-  return entry.count <= 8; // máx. 8 tentativas a cada 10 minutos por IP
-}
-
-// Rate limit isolado para clientes — um ataque de força bruta no login de
-// clientes não deve consumir/afetar o limite do login do admin, e vice-versa.
-const customerLoginAttempts = new Map();
-function checkCustomerRateLimit(ip) {
-  const now = Date.now();
-  const entry = customerLoginAttempts.get(ip);
-  if (!entry || now > entry.resetAt) {
-    customerLoginAttempts.set(ip, { count: 1, resetAt: now + 10 * 60 * 1000 });
-    return true;
-  }
-  entry.count++;
-  return entry.count <= 8;
+  return entry.count <= max; // máx. tentativas a cada 10 minutos
 }
 
 function json(res, status, data) {
@@ -87,119 +87,45 @@ function requireAuth(req, res, next) {
   next();
 }
 
-function requireCustomerAuth(req, res, next) {
+// Exige que o cliente esteja logado (usado nas rotas "minha conta").
+function requireCustomer(req, res, next) {
   const header = req.headers["authorization"] || "";
   const token = header.startsWith("Bearer ") ? header.slice(7) : null;
   const payload = auth.verify(token, JWT_SECRET);
   if (!payload || payload.role !== "customer") {
-    json(res, 401, { error: "Sessão expirada. Faça login novamente." });
+    json(res, 401, { error: "Faça login para continuar." });
     return;
   }
-  req.customerId = payload.customerId;
+  req.customerId = payload.id;
   next();
 }
 
-// Usado em rotas públicas (como criar pedido) que se comportam diferente
-// quando existe um cliente logado, mas não devem travar se não existir.
+// Tenta identificar um cliente logado sem bloquear a rota se não houver
+// token (usado em /api/orders — funciona tanto logado quanto como convidado).
 function getOptionalCustomerId(req) {
   const header = req.headers["authorization"] || "";
   const token = header.startsWith("Bearer ") ? header.slice(7) : null;
   const payload = auth.verify(token, JWT_SECRET);
-  return payload && payload.role === "customer" ? payload.customerId : null;
+  return payload && payload.role === "customer" ? payload.id : null;
 }
 
-const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const UF_REGEX = /^[A-Z]{2}$/;
-
 function publicCustomer(c) {
-  // Nunca devolve passwordHash para o navegador.
+  // Nunca devolve passwordHash pro frontend.
   const { passwordHash, ...rest } = c;
   return rest;
 }
 
-// Endereço estruturado (não é mais um campo de texto livre). "complement"
-// é o único campo opcional — todos os outros são obrigatórios para fechar
-// um pedido, já que sem eles a entrega não tem como acontecer.
-const EMPTY_ADDRESS = { cep: "", street: "", number: "", complement: "", neighborhood: "", city: "", state: "" };
-
-function normalizeAddressInput(raw) {
-  // Contas criadas antes dessa atualização guardaram o endereço como um
-  // texto único (ex: "Rua X, 534, Centro"). Em vez de perder essa informação
-  // ou deixar tudo em branco, jogamos o texto inteiro no campo "Rua" — o
-  // cliente só precisa completar CEP/número/bairro/cidade/estado uma vez,
-  // não redigitar tudo do zero.
-  if (typeof raw === "string" && raw.trim()) {
-    return { ...EMPTY_ADDRESS, street: raw.trim() };
-  }
-  const a = raw && typeof raw === "object" ? raw : {};
-  return {
-    cep: String(a.cep || "").replace(/\D/g, "").slice(0, 8),
-    street: String(a.street || "").trim(),
-    number: String(a.number || "").trim(),
-    complement: String(a.complement || "").trim(),
-    neighborhood: String(a.neighborhood || "").trim(),
-    city: String(a.city || "").trim(),
-    state: String(a.state || "").trim().toUpperCase()
-  };
-}
-
-function addressValidationError(addr) {
-  if (addr.cep.length !== 8) return "CEP inválido — deve ter 8 dígitos.";
-  if (!addr.street) return "Rua é obrigatória.";
-  if (!addr.number) return "Número é obrigatório.";
-  if (!addr.neighborhood) return "Bairro é obrigatório.";
-  if (!addr.city) return "Cidade é obrigatória.";
-  if (!UF_REGEX.test(addr.state)) return "Estado (UF) inválido — use a sigla com 2 letras, ex: AC.";
-  return null;
-}
-
-function addressToString(addr) {
-  if (!addr || typeof addr !== "object") return "";
-  const parts = [];
-  if (addr.street) parts.push(addr.street + (addr.number ? ", " + addr.number : ""));
-  if (addr.complement) parts.push(addr.complement);
-  if (addr.neighborhood) parts.push(addr.neighborhood);
-  if (addr.city || addr.state) parts.push([addr.city, addr.state].filter(Boolean).join("/"));
-  if (addr.cep) parts.push("CEP " + addr.cep.replace(/(\d{5})(\d{3})/, "$1-$2"));
-  return parts.join(" - ");
-}
-
-// Junta o endereço enviado no pedido com o que já está salvo na conta,
-// campo por campo (não é tudo-ou-nada) — assim, se o cliente só corrigir o
-// número no checkout, o resto continua vindo do que ele já tinha salvo.
-function mergeAddress(bodyAddr, savedAddr) {
-  const body = normalizeAddressInput(bodyAddr);
-  const saved = normalizeAddressInput(savedAddr);
-  const merged = {};
-  for (const key of Object.keys(EMPTY_ADDRESS)) {
-    merged[key] = body[key] || saved[key] || "";
-  }
-  return merged;
-}
-
-// Fotos extras de um produto (outros ângulos e/ou variações de cor). Cada
-// entrada é { url, color } — color fica vazio quando é só mais um ângulo,
-// sem ser uma variação de cor específica.
-function sanitizeProductImages(arr) {
-  if (!Array.isArray(arr)) return [];
-  return arr
-    .map((i) => ({
-      url: String((i && i.url) || "").trim(),
-      color: String((i && i.color) || "").trim()
-    }))
-    .filter((i) => i.url)
-    .slice(0, 8);
-}
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const router = new Router();
 
 // ---- Health check ----
-router.get("/api/health", (req, res) => json(res, 200, { ok: true, storage: store.USE_SUPABASE ? "supabase" : "arquivo-local" }));
+router.get("/api/health", (req, res) => json(res, 200, { ok: true }));
 
-// ---- Auth ----
+// ---- Auth do admin ----
 router.post("/api/auth/login", (req, res) => {
   const ip = req.socket.remoteAddress || "unknown";
-  if (!checkRateLimit(ip)) {
+  if (!checkRateLimit(`admin:${ip}`)) {
     return json(res, 429, { error: "Muitas tentativas. Aguarde alguns minutos." });
   }
   const { password } = req.body || {};
@@ -210,10 +136,136 @@ router.post("/api/auth/login", (req, res) => {
   json(res, 200, { token });
 });
 
+// ==================== CONTA DO CLIENTE ====================
+
+router.post("/api/customers/register", async (req, res) => {
+  const ip = req.socket.remoteAddress || "unknown";
+  if (!checkRateLimit(`register:${ip}`, 15)) {
+    return json(res, 429, { error: "Muitas tentativas. Aguarde alguns minutos." });
+  }
+  const b = req.body || {};
+  const name = String(b.name || "").trim();
+  const email = String(b.email || "").trim().toLowerCase();
+  const phone = String(b.phone || "").trim();
+  const password = String(b.password || "");
+
+  if (!name || !email || !phone || !password) {
+    return json(res, 400, { error: "Preencha nome, e-mail, telefone e senha." });
+  }
+  if (!EMAIL_RE.test(email)) return json(res, 400, { error: "E-mail inválido." });
+  if (password.length < 6) return json(res, 400, { error: "A senha precisa ter pelo menos 6 caracteres." });
+
+  const customers = await store.readJSON("customers.json", []);
+  if (customers.some((c) => c.email === email)) {
+    return json(res, 409, { error: "Já existe uma conta com esse e-mail." });
+  }
+
+  const customer = {
+    id: "cus_" + crypto.randomBytes(6).toString("hex"),
+    name,
+    email,
+    phone,
+    address: String(b.address || "").trim(),
+    receiveOffers: b.receiveOffers !== false,
+    passwordHash: auth.hashPassword(password),
+    createdAt: new Date().toISOString()
+  };
+  customers.push(customer);
+  await store.writeJSON("customers.json", customers);
+
+  const token = auth.sign({ role: "customer", id: customer.id }, JWT_SECRET);
+  json(res, 201, { token, customer: publicCustomer(customer) });
+});
+
+router.post("/api/customers/login", async (req, res) => {
+  const ip = req.socket.remoteAddress || "unknown";
+  if (!checkRateLimit(`custlogin:${ip}`)) {
+    return json(res, 429, { error: "Muitas tentativas. Aguarde alguns minutos." });
+  }
+  const email = String((req.body || {}).email || "").trim().toLowerCase();
+  const password = String((req.body || {}).password || "");
+  const customers = await store.readJSON("customers.json", []);
+  const customer = customers.find((c) => c.email === email);
+  if (!customer || !auth.verifyPassword(password, customer.passwordHash)) {
+    return json(res, 401, { error: "E-mail ou senha incorretos." });
+  }
+  const token = auth.sign({ role: "customer", id: customer.id }, JWT_SECRET);
+  json(res, 200, { token, customer: publicCustomer(customer) });
+});
+
+router.get("/api/customers/me", requireCustomer, async (req, res) => {
+  const customers = await store.readJSON("customers.json", []);
+  const customer = customers.find((c) => c.id === req.customerId);
+  if (!customer) return json(res, 404, { error: "Conta não encontrada." });
+  json(res, 200, publicCustomer(customer));
+});
+
+router.put("/api/customers/me", requireCustomer, async (req, res) => {
+  const customers = await store.readJSON("customers.json", []);
+  const idx = customers.findIndex((c) => c.id === req.customerId);
+  if (idx === -1) return json(res, 404, { error: "Conta não encontrada." });
+  const b = req.body || {};
+  customers[idx] = {
+    ...customers[idx],
+    name: b.name !== undefined ? String(b.name).trim() : customers[idx].name,
+    phone: b.phone !== undefined ? String(b.phone).trim() : customers[idx].phone,
+    address: b.address !== undefined ? String(b.address).trim() : customers[idx].address,
+    receiveOffers: b.receiveOffers !== undefined ? Boolean(b.receiveOffers) : customers[idx].receiveOffers
+  };
+  if (b.password) {
+    if (String(b.password).length < 6) return json(res, 400, { error: "A nova senha precisa ter pelo menos 6 caracteres." });
+    customers[idx].passwordHash = auth.hashPassword(String(b.password));
+  }
+  await store.writeJSON("customers.json", customers);
+  json(res, 200, publicCustomer(customers[idx]));
+});
+
+router.get("/api/customers/me/orders", requireCustomer, async (req, res) => {
+  const orders = await store.readJSON("orders.json", []);
+  const mine = orders
+    .filter((o) => o.customerId === req.customerId)
+    .sort((a, b) => new Date(b.date) - new Date(a.date));
+  json(res, 200, mine);
+});
+
+// ==================== SEÇÕES DE PRODUTO ====================
+
+router.get("/api/sections", async (req, res) => {
+  const sections = await store.readJSON("sections.json", DEFAULT_SECTIONS);
+  json(res, 200, sections);
+});
+
+router.post("/api/admin/sections", requireAuth, async (req, res) => {
+  const sections = await store.readJSON("sections.json", DEFAULT_SECTIONS);
+  const name = String((req.body || {}).name || "").trim();
+  if (!name) return json(res, 400, { error: "Nome da seção é obrigatório." });
+  const id = name.toLowerCase()
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // remove acentos
+    .replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+  if (sections.some((s) => s.id === id)) return json(res, 409, { error: "Já existe uma seção com esse nome." });
+  const section = { id, name };
+  sections.push(section);
+  await store.writeJSON("sections.json", sections);
+  json(res, 201, section);
+});
+
+router.delete("/api/admin/sections/:id", requireAuth, async (req, res) => {
+  let sections = await store.readJSON("sections.json", DEFAULT_SECTIONS);
+  const exists = sections.some((s) => s.id === req.params.id);
+  if (!exists) return json(res, 404, { error: "Seção não encontrada." });
+  sections = sections.filter((s) => s.id !== req.params.id);
+  await store.writeJSON("sections.json", sections);
+  json(res, 200, { deleted: true });
+});
+
+// ==================== PRODUTOS ====================
+
 // ---- Produtos (público) ----
 router.get("/api/products", async (req, res) => {
   const products = await store.readJSON("products.json", DEFAULT_PRODUCTS);
-  json(res, 200, products.filter((p) => p.active !== false));
+  let list = products.filter((p) => p.active !== false);
+  if (req.query.section) list = list.filter((p) => p.section === req.query.section);
+  json(res, 200, list);
 });
 
 // ---- Produtos (admin) ----
@@ -234,12 +286,10 @@ router.post("/api/admin/products", requireAuth, async (req, res) => {
     description: String(p.description || "").trim(),
     specs: Array.isArray(p.specs) ? p.specs : [],
     image: String(p.image || ""),
-    images: sanitizeProductImages(p.images),
     price: Number(p.price),
-    cost: p.cost !== undefined && p.cost !== null && p.cost !== "" ? Number(p.cost) : null,
     promoPrice: p.promoPrice ? Number(p.promoPrice) : null,
     category: p.category === "dropship" ? "dropship" : "proprio",
-    categoryId: p.categoryId ? String(p.categoryId) : null,
+    section: String(p.section || "").trim(),
     badge: String(p.badge || ""),
     active: p.active !== false
   };
@@ -259,12 +309,10 @@ router.put("/api/admin/products/:id", requireAuth, async (req, res) => {
     description: p.description !== undefined ? String(p.description).trim() : products[idx].description,
     specs: Array.isArray(p.specs) ? p.specs : products[idx].specs,
     image: p.image !== undefined ? String(p.image) : products[idx].image,
-    images: p.images !== undefined ? sanitizeProductImages(p.images) : (products[idx].images || []),
     price: p.price !== undefined ? Number(p.price) : products[idx].price,
-    cost: p.cost !== undefined ? (p.cost !== null && p.cost !== "" ? Number(p.cost) : null) : products[idx].cost,
     promoPrice: p.promoPrice !== undefined ? (p.promoPrice ? Number(p.promoPrice) : null) : products[idx].promoPrice,
     category: p.category !== undefined ? (p.category === "dropship" ? "dropship" : "proprio") : products[idx].category,
-    categoryId: p.categoryId !== undefined ? (p.categoryId ? String(p.categoryId) : null) : products[idx].categoryId,
+    section: p.section !== undefined ? String(p.section).trim() : products[idx].section,
     badge: p.badge !== undefined ? String(p.badge) : products[idx].badge,
     active: p.active !== undefined ? Boolean(p.active) : products[idx].active
   };
@@ -281,167 +329,7 @@ router.delete("/api/admin/products/:id", requireAuth, async (req, res) => {
   json(res, 200, { deleted: true });
 });
 
-// ---- Categorias (setores/seções de produtos, criadas livremente pelo admin) ----
-router.get("/api/categories", async (req, res) => {
-  const categories = await store.readJSON("categories.json", []);
-  json(res, 200, categories);
-});
-
-router.get("/api/admin/categories", requireAuth, async (req, res) => {
-  const categories = await store.readJSON("categories.json", []);
-  json(res, 200, categories);
-});
-
-router.post("/api/admin/categories", requireAuth, async (req, res) => {
-  const categories = await store.readJSON("categories.json", []);
-  const name = String((req.body || {}).name || "").trim();
-  if (!name) return json(res, 400, { error: "Nome da categoria é obrigatório." });
-  if (categories.some((c) => c.name.toLowerCase() === name.toLowerCase())) {
-    return json(res, 400, { error: "Já existe uma categoria com esse nome." });
-  }
-  const category = { id: "cat_" + crypto.randomBytes(6).toString("hex"), name };
-  categories.push(category);
-  await store.writeJSON("categories.json", categories);
-  json(res, 201, category);
-});
-
-router.put("/api/admin/categories/:id", requireAuth, async (req, res) => {
-  const categories = await store.readJSON("categories.json", []);
-  const idx = categories.findIndex((c) => c.id === req.params.id);
-  if (idx === -1) return json(res, 404, { error: "Categoria não encontrada." });
-  const name = String((req.body || {}).name || "").trim();
-  if (!name) return json(res, 400, { error: "Nome da categoria é obrigatório." });
-  if (categories.some((c) => c.id !== req.params.id && c.name.toLowerCase() === name.toLowerCase())) {
-    return json(res, 400, { error: "Já existe uma categoria com esse nome." });
-  }
-  categories[idx].name = name;
-  await store.writeJSON("categories.json", categories);
-  json(res, 200, categories[idx]);
-});
-
-router.delete("/api/admin/categories/:id", requireAuth, async (req, res) => {
-  let categories = await store.readJSON("categories.json", []);
-  const exists = categories.some((c) => c.id === req.params.id);
-  if (!exists) return json(res, 404, { error: "Categoria não encontrada." });
-  categories = categories.filter((c) => c.id !== req.params.id);
-  await store.writeJSON("categories.json", categories);
-  // Produtos que usavam essa categoria ficam "sem categoria" — nunca sobra uma
-  // referência pra uma categoria que não existe mais.
-  const products = await store.readJSON("products.json", DEFAULT_PRODUCTS);
-  let changed = false;
-  products.forEach((p) => {
-    if (p.categoryId === req.params.id) { p.categoryId = null; changed = true; }
-  });
-  if (changed) await store.writeJSON("products.json", products);
-  json(res, 200, { deleted: true });
-});
-
-// ---- Banners (carrossel de destaques/promoções na loja) ----
-router.get("/api/banners", async (req, res) => {
-  const banners = await store.readJSON("banners.json", []);
-  json(res, 200, banners.filter((b) => b.active !== false));
-});
-
-router.get("/api/admin/banners", requireAuth, async (req, res) => {
-  const banners = await store.readJSON("banners.json", []);
-  json(res, 200, banners);
-});
-
-router.post("/api/admin/banners", requireAuth, async (req, res) => {
-  const banners = await store.readJSON("banners.json", []);
-  const b = req.body || {};
-  if (!b.image) return json(res, 400, { error: "A imagem do banner é obrigatória." });
-  const banner = {
-    id: "ban_" + crypto.randomBytes(6).toString("hex"),
-    image: String(b.image),
-    title: String(b.title || "").trim(),
-    subtitle: String(b.subtitle || "").trim(),
-    link: String(b.link || "").trim(),
-    active: b.active !== false
-  };
-  banners.push(banner);
-  await store.writeJSON("banners.json", banners);
-  json(res, 201, banner);
-});
-
-// Precisa vir ANTES de "/api/admin/banners/:id" — o roteador é simples e usa a
-// primeira rota que bater na forma do caminho, então uma rota estática
-// registrada depois de uma rota com :id nunca seria alcançada.
-router.put("/api/admin/banners/reorder", requireAuth, async (req, res) => {
-  const { ids } = req.body || {};
-  if (!Array.isArray(ids)) return json(res, 400, { error: "Lista de ids inválida." });
-  const banners = await store.readJSON("banners.json", []);
-  const byId = Object.fromEntries(banners.map((b) => [b.id, b]));
-  const reordered = ids.map((id) => byId[id]).filter(Boolean);
-  banners.forEach((b) => { if (!ids.includes(b.id)) reordered.push(b); });
-  await store.writeJSON("banners.json", reordered);
-  json(res, 200, reordered);
-});
-
-router.put("/api/admin/banners/:id", requireAuth, async (req, res) => {
-  const banners = await store.readJSON("banners.json", []);
-  const idx = banners.findIndex((x) => x.id === req.params.id);
-  if (idx === -1) return json(res, 404, { error: "Banner não encontrado." });
-  const b = req.body || {};
-  banners[idx] = {
-    ...banners[idx],
-    image: b.image !== undefined ? String(b.image) : banners[idx].image,
-    title: b.title !== undefined ? String(b.title).trim() : banners[idx].title,
-    subtitle: b.subtitle !== undefined ? String(b.subtitle).trim() : banners[idx].subtitle,
-    link: b.link !== undefined ? String(b.link).trim() : banners[idx].link,
-    active: b.active !== undefined ? Boolean(b.active) : banners[idx].active
-  };
-  await store.writeJSON("banners.json", banners);
-  json(res, 200, banners[idx]);
-});
-
-router.delete("/api/admin/banners/:id", requireAuth, async (req, res) => {
-  let banners = await store.readJSON("banners.json", []);
-  const exists = banners.some((x) => x.id === req.params.id);
-  if (!exists) return json(res, 404, { error: "Banner não encontrado." });
-  banners = banners.filter((x) => x.id !== req.params.id);
-  await store.writeJSON("banners.json", banners);
-  json(res, 200, { deleted: true });
-});
-
-// ---- Despesas operacionais (pro DRE: aluguel, embalagem, taxas, etc.) ----
-router.get("/api/admin/expenses", requireAuth, async (req, res) => {
-  const expenses = await store.readJSON("expenses.json", []);
-  json(res, 200, expenses);
-});
-
-router.post("/api/admin/expenses", requireAuth, async (req, res) => {
-  const expenses = await store.readJSON("expenses.json", []);
-  const e = req.body || {};
-  const description = String(e.description || "").trim();
-  const amount = Number(e.amount);
-  if (!description || !amount || amount <= 0) {
-    return json(res, 400, { error: "Descrição e valor (maior que zero) são obrigatórios." });
-  }
-  const expense = {
-    id: "exp_" + crypto.randomBytes(6).toString("hex"),
-    description,
-    amount,
-    date: e.date ? new Date(e.date).toISOString() : new Date().toISOString()
-  };
-  expenses.push(expense);
-  await store.writeJSON("expenses.json", expenses);
-  json(res, 201, expense);
-});
-
-router.delete("/api/admin/expenses/:id", requireAuth, async (req, res) => {
-  let expenses = await store.readJSON("expenses.json", []);
-  const exists = expenses.some((x) => x.id === req.params.id);
-  if (!exists) return json(res, 404, { error: "Despesa não encontrada." });
-  expenses = expenses.filter((x) => x.id !== req.params.id);
-  await store.writeJSON("expenses.json", expenses);
-  json(res, 200, { deleted: true });
-});
-
 // ---- Upload de imagem (admin) ----
-// Recebe { imageBase64: "data:image/jpeg;base64,...." } já comprimida pelo navegador
-// e envia para o Cloudinary, que guarda a imagem de forma permanente
-// (arquivos salvos localmente no Render são apagados a cada novo deploy/restart).
 router.post("/api/admin/upload", requireAuth, async (req, res) => {
   const { imageBase64 } = req.body || {};
   if (!imageBase64 || !imageBase64.startsWith("data:image/")) {
@@ -466,174 +354,14 @@ router.post("/api/admin/upload", requireAuth, async (req, res) => {
   }
 });
 
-// ---- Contas de cliente ----
-router.post("/api/customers/signup", async (req, res) => {
-  const { name, email, password, phone, address } = req.body || {};
-  if (!name || !email || !password) {
-    return json(res, 400, { error: "Nome, e-mail e senha são obrigatórios." });
-  }
-  const cleanEmail = String(email).trim().toLowerCase();
-  if (!EMAIL_REGEX.test(cleanEmail)) {
-    return json(res, 400, { error: "E-mail inválido." });
-  }
-  if (String(password).length < 8) {
-    return json(res, 400, { error: "A senha precisa ter pelo menos 8 caracteres." });
-  }
-  const cleanAddress = normalizeAddressInput(address);
-  const addressError = addressValidationError(cleanAddress);
-  if (addressError) return json(res, 400, { error: addressError });
+// ==================== PEDIDOS ====================
 
-  const customers = await store.readJSON("customers.json", []);
-  if (customers.some((c) => c.email === cleanEmail)) {
-    return json(res, 409, { error: "Já existe uma conta com esse e-mail." });
-  }
-  const customer = {
-    id: "cus_" + crypto.randomBytes(6).toString("hex"),
-    name: String(name).trim(),
-    email: cleanEmail,
-    phone: String(phone || "").trim(),
-    address: cleanAddress,
-    passwordHash: auth.hashPassword(String(password)),
-    createdAt: new Date().toISOString()
-  };
-  customers.push(customer);
-  await store.writeJSON("customers.json", customers);
-  const token = auth.sign({ role: "customer", customerId: customer.id }, JWT_SECRET, CUSTOMER_TOKEN_TTL);
-  json(res, 201, { token, customer: publicCustomer(customer) });
-});
-
-router.post("/api/customers/login", async (req, res) => {
-  const ip = req.socket.remoteAddress || "unknown";
-  if (!checkCustomerRateLimit(ip)) {
-    return json(res, 429, { error: "Muitas tentativas. Aguarde alguns minutos." });
-  }
-  const { email, password } = req.body || {};
-  const cleanEmail = String(email || "").trim().toLowerCase();
-  const customers = await store.readJSON("customers.json", []);
-  const customer = customers.find((c) => c.email === cleanEmail);
-  if (!customer || !auth.verifyPassword(String(password || ""), customer.passwordHash)) {
-    return json(res, 401, { error: "E-mail ou senha incorretos." });
-  }
-  const token = auth.sign({ role: "customer", customerId: customer.id }, JWT_SECRET, CUSTOMER_TOKEN_TTL);
-  json(res, 200, { token, customer: publicCustomer(customer) });
-});
-
-// Login/cadastro com "Continuar com Google". O navegador manda o credential
-// (um ID token assinado pelo Google) devolvido pelo botão do Google Identity
-// Services. Aqui a gente confirma com o próprio Google que esse token é
-// válido e realmente foi emitido para o nosso GOOGLE_CLIENT_ID, e só então
-// confia no e-mail que ele contém (o Google já garante que é verificado).
-router.post("/api/customers/google", async (req, res) => {
-  if (!GOOGLE_CLIENT_ID) {
-    return json(res, 500, { error: "Login com Google não configurado no servidor (falta GOOGLE_CLIENT_ID)." });
-  }
-  const credential = req.body && req.body.credential;
-  if (!credential) return json(res, 400, { error: "Token do Google ausente." });
-
-  let payload;
-  try {
-    const googleRes = await fetch("https://oauth2.googleapis.com/tokeninfo?id_token=" + encodeURIComponent(credential));
-    payload = await googleRes.json();
-    if (!googleRes.ok || payload.error) throw new Error(payload.error_description || "token inválido");
-  } catch (e) {
-    return json(res, 401, { error: "Não foi possível verificar o login do Google. Tente novamente." });
-  }
-
-  if (payload.aud !== GOOGLE_CLIENT_ID || payload.email_verified !== "true" || !payload.email) {
-    return json(res, 401, { error: "Login do Google inválido para este site." });
-  }
-
-  const cleanEmail = String(payload.email).trim().toLowerCase();
-  const customers = await store.readJSON("customers.json", []);
-  let customer = customers.find((c) => c.email === cleanEmail);
-  let status = 200;
-
-  if (!customer) {
-    customer = {
-      id: "cus_" + crypto.randomBytes(6).toString("hex"),
-      name: String(payload.name || payload.given_name || cleanEmail.split("@")[0]).trim(),
-      email: cleanEmail,
-      phone: "",
-      address: { ...EMPTY_ADDRESS },
-      passwordHash: null, // conta criada via Google — sem senha própria
-      googleId: payload.sub,
-      createdAt: new Date().toISOString()
-    };
-    customers.push(customer);
-    status = 201;
-    await store.writeJSON("customers.json", customers);
-  } else if (!customer.googleId) {
-    // Conta já existia (cadastro por e-mail/senha) — só vincula ao Google,
-    // já que o e-mail é o mesmo e o Google confirmou que é verificado.
-    customer.googleId = payload.sub;
-    await store.writeJSON("customers.json", customers);
-  }
-
-  const token = auth.sign({ role: "customer", customerId: customer.id }, JWT_SECRET, CUSTOMER_TOKEN_TTL);
-  json(res, status, { token, customer: publicCustomer(customer) });
-});
-
-router.get("/api/customers/me", requireCustomerAuth, async (req, res) => {
-  const customers = await store.readJSON("customers.json", []);
-  const customer = customers.find((c) => c.id === req.customerId);
-  if (!customer) return json(res, 404, { error: "Conta não encontrada." });
-  json(res, 200, publicCustomer(customer));
-});
-
-router.put("/api/customers/me", requireCustomerAuth, async (req, res) => {
-  const customers = await store.readJSON("customers.json", []);
-  const idx = customers.findIndex((c) => c.id === req.customerId);
-  if (idx === -1) return json(res, 404, { error: "Conta não encontrada." });
-  const p = req.body || {};
-  if (p.name !== undefined) customers[idx].name = String(p.name).trim();
-  if (p.phone !== undefined) customers[idx].phone = String(p.phone).trim();
-  if (p.address !== undefined) {
-    const merged = mergeAddress(p.address, customers[idx].address);
-    // Só valida campo-a-campo se algo foi de fato enviado; permite salvar
-    // o perfil mesmo com endereço incompleto (ele será exigido no checkout).
-    customers[idx].address = merged;
-  }
-  await store.writeJSON("customers.json", customers);
-  json(res, 200, publicCustomer(customers[idx]));
-});
-
-router.get("/api/customers/orders", requireCustomerAuth, async (req, res) => {
-  const orders = await store.readJSON("orders.json", []);
-  const mine = orders
-    .filter((o) => o.customerId === req.customerId)
-    .sort((a, b) => new Date(b.date) - new Date(a.date));
-  json(res, 200, mine);
-});
-
-// ---- Pedidos ----
 router.post("/api/orders", async (req, res) => {
-  const { customer, items } = req.body || {};
-
-  // Se o cliente estiver logado, usamos os dados salvos da conta como
-  // reserva para qualquer campo que não venha preenchido no corpo da
-  // requisição — o padrão "Amazon" de não pedir tudo de novo a cada compra.
-  const customerId = getOptionalCustomerId(req);
-  let savedCustomer = null;
-  if (customerId) {
-    const customers = await store.readJSON("customers.json", []);
-    savedCustomer = customers.find((c) => c.id === customerId) || null;
-  }
-
-  const resolvedCustomer = {
-    name: (customer && customer.name) || (savedCustomer && savedCustomer.name) || "",
-    phone: (customer && customer.phone) || (savedCustomer && savedCustomer.phone) || "",
-    email: (customer && customer.email) || (savedCustomer && savedCustomer.email) || "",
-    address: mergeAddress(customer && customer.address, savedCustomer && savedCustomer.address)
-  };
-
-  if (!resolvedCustomer.name || !resolvedCustomer.phone || !Array.isArray(items) || items.length === 0) {
+  const { customer, items, shippingAddress } = req.body || {};
+  if (!customer || !customer.name || !customer.phone || !Array.isArray(items) || items.length === 0) {
     return json(res, 400, { error: "Dados do pedido incompletos." });
   }
-  const addressError = addressValidationError(resolvedCustomer.address);
-  if (addressError) return json(res, 400, { error: addressError });
   const products = await store.readJSON("products.json", DEFAULT_PRODUCTS);
-  // Recalcula o total no servidor a partir do preço real do produto —
-  // nunca confiar no preço enviado pelo navegador.
   let total = 0;
   const resolvedItems = [];
   for (const item of items) {
@@ -643,9 +371,11 @@ router.post("/api/orders", async (req, res) => {
     const unitPrice = hasPromo ? Number(product.promoPrice) : Number(product.price);
     const qty = Math.max(1, parseInt(item.qty, 10) || 1);
     total += unitPrice * qty;
-    resolvedItems.push({ productId: product.id, name: product.name, price: unitPrice, qty, cost: product.cost !== undefined && product.cost !== null ? Number(product.cost) : null });
+    resolvedItems.push({ productId: product.id, name: product.name, price: unitPrice, qty, section: product.section || "" });
   }
   if (resolvedItems.length === 0) return json(res, 400, { error: "Nenhum item válido no pedido." });
+
+  const customerId = getOptionalCustomerId(req);
 
   const orders = await store.readJSON("orders.json", []);
   const order = {
@@ -653,12 +383,14 @@ router.post("/api/orders", async (req, res) => {
     date: new Date().toISOString(),
     customerId: customerId || null,
     customer: {
-      name: String(resolvedCustomer.name).trim(),
-      phone: String(resolvedCustomer.phone).trim(),
-      email: String(resolvedCustomer.email || "").trim(),
-      address: resolvedCustomer.address,
-      addressText: addressToString(resolvedCustomer.address)
+      name: String(customer.name).trim(),
+      phone: String(customer.phone).trim(),
+      email: String(customer.email || "").trim(),
+      address: String(customer.address || "").trim()
     },
+    // Se o cliente não mandou um endereço de entrega separado, usa o
+    // mesmo endereço de cadastro/cobrança.
+    shippingAddress: String(shippingAddress || customer.address || "").trim(),
     items: resolvedItems,
     total,
     status: "pendente"
@@ -666,19 +398,14 @@ router.post("/api/orders", async (req, res) => {
   orders.push(order);
   await store.writeJSON("orders.json", orders);
 
-  // Se o endereço usado no pedido for diferente do que estava salvo na conta
-  // (ex: cliente corrigiu o número no checkout), atualiza o perfil também —
-  // assim da próxima vez já vem certo, sem precisar editar de novo depois.
-  if (customerId && savedCustomer) {
-    const savedNorm = normalizeAddressInput(savedCustomer.address);
-    const changed = Object.keys(EMPTY_ADDRESS).some((k) => savedNorm[k] !== resolvedCustomer.address[k]);
-    if (changed) {
-      const customers = await store.readJSON("customers.json", []);
-      const idx = customers.findIndex((c) => c.id === customerId);
-      if (idx > -1) {
-        customers[idx].address = resolvedCustomer.address;
-        await store.writeJSON("customers.json", customers);
-      }
+  // Se o cliente estiver logado e não tiver endereço salvo ainda, aproveita
+  // o endereço do pedido pra já deixar preenchido no perfil dele.
+  if (customerId && order.customer.address) {
+    const customers = await store.readJSON("customers.json", []);
+    const idx = customers.findIndex((c) => c.id === customerId);
+    if (idx !== -1 && !customers[idx].address) {
+      customers[idx].address = order.customer.address;
+      await store.writeJSON("customers.json", customers);
     }
   }
 
@@ -690,10 +417,6 @@ router.get("/api/admin/orders", requireAuth, async (req, res) => {
   json(res, 200, orders);
 });
 
-// Consulta pública e enxuta de um pedido específico. Usada pelo site para
-// descobrir se um pedido pendente já foi pago quando o cliente volta à loja
-// depois de sair da tela de pagamento (sem passar pelo redirecionamento
-// automático). Nunca devolve os dados do cliente — só o essencial.
 router.get("/api/orders/:id", async (req, res) => {
   const orders = await store.readJSON("orders.json", []);
   const order = orders.find((o) => o.id === req.params.id);
@@ -713,21 +436,139 @@ router.put("/api/admin/orders/:id/status", requireAuth, async (req, res) => {
   if (!order) return json(res, 404, { error: "Pedido não encontrado." });
   const allowed = ["pendente", "confirmado", "enviado", "entregue", "cancelado"];
   if (!allowed.includes(req.body.status)) return json(res, 400, { error: "Status inválido." });
+  const wasConfirmed = order.status === "confirmado" || order.status === "enviado" || order.status === "entregue";
   order.status = req.body.status;
   await store.writeJSON("orders.json", orders);
+
+  // Se o pedido está virando "confirmado" agora (não estava antes), manda o
+  // e-mail de confirmação — cobre o caso de pagamento combinado manualmente
+  // pelo lojista, fora do fluxo automático do Mercado Pago.
+  if (req.body.status === "confirmado" && !wasConfirmed && RESEND_API_KEY && RESEND_FROM_EMAIL) {
+    try {
+      await email.sendOrderConfirmation({ order, apiKey: RESEND_API_KEY, fromEmail: RESEND_FROM_EMAIL, storeName: STORE_NAME });
+    } catch (emailErr) {
+      console.error("Erro ao enviar e-mail de confirmação:", emailErr.message);
+    }
+  }
+
   json(res, 200, order);
 });
 
+// ==================== CLIENTES (ADMIN) ====================
+
 router.get("/api/admin/customers", requireAuth, async (req, res) => {
-  const orders = await store.readJSON("orders.json", []);
+  const [orders, customers] = await Promise.all([
+    store.readJSON("orders.json", []),
+    store.readJSON("customers.json", [])
+  ]);
+
   const map = {};
+  // Começa pelos clientes com conta cadastrada — são a fonte de verdade
+  // pra contato/e-mail marketing.
+  customers.forEach((c) => {
+    map[c.email || c.id] = {
+      id: c.id,
+      name: c.name,
+      phone: c.phone,
+      email: c.email,
+      registered: true,
+      receiveOffers: c.receiveOffers,
+      orders: 0,
+      total: 0
+    };
+  });
+  // Adiciona/combina com pedidos (inclusive de quem comprou como convidado).
   orders.forEach((o) => {
-    const key = (o.customer.phone || o.customer.email || o.customer.name).toLowerCase();
-    if (!map[key]) map[key] = { name: o.customer.name, phone: o.customer.phone, email: o.customer.email, orders: 0, total: 0 };
+    const key = o.customerId
+      ? (customers.find((c) => c.id === o.customerId)?.email || o.customerId)
+      : (o.customer.email || o.customer.phone || o.customer.name).toLowerCase();
+    if (!map[key]) {
+      map[key] = {
+        id: null,
+        name: o.customer.name,
+        phone: o.customer.phone,
+        email: o.customer.email,
+        registered: false,
+        receiveOffers: false,
+        orders: 0,
+        total: 0
+      };
+    }
     map[key].orders++;
     map[key].total += Number(o.total || 0);
   });
+
   json(res, 200, Object.values(map).sort((a, b) => b.total - a.total));
+});
+
+// ==================== RELATÓRIOS / DRE (ADMIN) ====================
+
+router.get("/api/admin/reports/dre", requireAuth, async (req, res) => {
+  const orders = await store.readJSON("orders.json", []);
+  const days = Math.min(365, Math.max(1, parseInt(req.query.days, 10) || 30));
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+  const inRange = orders.filter((o) => new Date(o.date) >= since);
+  const paidStatuses = ["confirmado", "enviado", "entregue"];
+  const paid = inRange.filter((o) => paidStatuses.includes(o.status));
+  const cancelled = inRange.filter((o) => o.status === "cancelado");
+  const pending = inRange.filter((o) => o.status === "pendente");
+
+  const receitaBruta = paid.reduce((sum, o) => sum + Number(o.total || 0), 0);
+  const ticketMedio = paid.length ? receitaBruta / paid.length : 0;
+
+  // Receita por status
+  const porStatus = {};
+  inRange.forEach((o) => {
+    porStatus[o.status] = porStatus[o.status] || { pedidos: 0, total: 0 };
+    porStatus[o.status].pedidos++;
+    porStatus[o.status].total += Number(o.total || 0);
+  });
+
+  // Receita por seção de produto (só pedidos pagos)
+  const porSecao = {};
+  paid.forEach((o) => {
+    o.items.forEach((it) => {
+      const sec = it.section || "sem-secao";
+      porSecao[sec] = porSecao[sec] || { quantidade: 0, receita: 0 };
+      porSecao[sec].quantidade += it.qty;
+      porSecao[sec].receita += it.price * it.qty;
+    });
+  });
+
+  // Receita por dia (últimos N dias) — pra gráfico simples no admin
+  const porDia = {};
+  paid.forEach((o) => {
+    const day = o.date.slice(0, 10);
+    porDia[day] = (porDia[day] || 0) + Number(o.total || 0);
+  });
+
+  // Top produtos por receita
+  const porProduto = {};
+  paid.forEach((o) => {
+    o.items.forEach((it) => {
+      porProduto[it.name] = porProduto[it.name] || { quantidade: 0, receita: 0 };
+      porProduto[it.name].quantidade += it.qty;
+      porProduto[it.name].receita += it.price * it.qty;
+    });
+  });
+  const topProdutos = Object.entries(porProduto)
+    .map(([name, v]) => ({ name, ...v }))
+    .sort((a, b) => b.receita - a.receita)
+    .slice(0, 10);
+
+  json(res, 200, {
+    periodoDias: days,
+    receitaBruta,
+    pedidosPagos: paid.length,
+    pedidosCancelados: cancelled.length,
+    pedidosPendentes: pending.length,
+    ticketMedio,
+    porStatus,
+    porSecao: Object.entries(porSecao).map(([id, v]) => ({ id, ...v })),
+    porDia: Object.entries(porDia).sort(([a], [b]) => a.localeCompare(b)).map(([day, total]) => ({ day, total })),
+    topProdutos
+  });
 });
 
 // ---- Pagamentos (Mercado Pago) ----
@@ -738,10 +579,6 @@ router.post("/api/payments/create-preference", async (req, res) => {
   const order = orders.find((o) => o.id === orderId);
   if (!order) return json(res, 404, { error: "Pedido não encontrado." });
 
-  // FRONTEND_URL só serve para montar os links de retorno se for uma URL de
-  // verdade (http/https). Se estiver como "*" (comum enquanto se ajusta o CORS),
-  // simplesmente não mandamos back_urls — o pagamento continua funcionando,
-  // só sem o redirecionamento automático de volta pro site.
   const validFrontend = /^https?:\/\//.test(FRONTEND_URL || "");
   const backUrls = validFrontend ? {
     success: `${FRONTEND_URL}/#pedido-confirmado`,
@@ -765,7 +602,6 @@ router.post("/api/payments/create-preference", async (req, res) => {
 });
 
 router.post("/api/payments/webhook", async (req, res) => {
-  // O Mercado Pago pode notificar por querystring (?topic=payment&id=123) ou no corpo (data.id)
   const paymentId = req.query.id || req.query["data.id"] || (req.body && req.body.data && req.body.data.id);
   if (!paymentId || !MP_ACCESS_TOKEN) return json(res, 200, { received: true });
 
@@ -779,6 +615,24 @@ router.post("/api/payments/webhook", async (req, res) => {
         order.status = "confirmado";
         order.paymentId = payment.id;
         await store.writeJSON("orders.json", orders);
+
+        // Dispara o e-mail de confirmação de venda. Erro no envio não deve
+        // derrubar o webhook (o Mercado Pago espera um 200 rápido), então
+        // isolamos num try/catch próprio e só logamos se falhar.
+        if (RESEND_API_KEY && RESEND_FROM_EMAIL) {
+          try {
+            await email.sendOrderConfirmation({
+              order,
+              apiKey: RESEND_API_KEY,
+              fromEmail: RESEND_FROM_EMAIL,
+              storeName: STORE_NAME
+            });
+          } catch (emailErr) {
+            console.error("Erro ao enviar e-mail de confirmação:", emailErr.message);
+          }
+        } else {
+          console.warn("[AVISO] RESEND_API_KEY/RESEND_FROM_EMAIL não configurados — e-mail de confirmação não enviado.");
+        }
       }
     }
   } catch (e) {
@@ -800,7 +654,6 @@ const server = http.createServer(async (req, res) => {
     return res.end();
   }
 
-  // Arquivos de upload servidos estaticamente
   if (req.method === "GET" && url.pathname.startsWith("/uploads/")) {
     const filePath = path.join(UPLOADS_DIR, path.basename(url.pathname));
     if (fs.existsSync(filePath)) {
@@ -826,5 +679,4 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, () => {
   console.log(`REI TECH backend rodando em ${PUBLIC_BASE_URL} (porta ${PORT})`);
-  console.log(`Armazenamento: ${store.USE_SUPABASE ? "Supabase (permanente)" : "arquivo local (some a cada deploy no Render!)"}`);
 });
