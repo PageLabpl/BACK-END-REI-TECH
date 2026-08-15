@@ -501,6 +501,50 @@ router.post("/api/admin/upload", requireAuth, async (req, res) => {
   }
 });
 
+// Upload de vídeo (admin) — mesma ideia do upload de imagem, mas o vídeo vai
+// direto pro Cloudinary aqui (implementado sem depender de lib/cloudinary.js,
+// que só sabe lidar com imagem). Usa a mesma conta/credenciais do Cloudinary.
+router.post("/api/admin/upload-video", requireAuth, async (req, res) => {
+  const { videoBase64 } = req.body || {};
+  if (!videoBase64 || !videoBase64.startsWith("data:video/")) {
+    return json(res, 400, { error: "Vídeo inválido." });
+  }
+  if (!CLOUDINARY_CLOUD_NAME || !CLOUDINARY_API_KEY || !CLOUDINARY_API_SECRET) {
+    return json(res, 500, { error: "Upload de vídeo não configurado no servidor (faltam as credenciais do Cloudinary)." });
+  }
+  const approxBytes = videoBase64.length * 0.75;
+  if (approxBytes > 30 * 1024 * 1024) {
+    return json(res, 400, { error: "Vídeo muito grande (máx. 30MB). Tente um arquivo mais curto ou mais comprimido." });
+  }
+  try {
+    const timestamp = Math.floor(Date.now() / 1000);
+    // Assinatura exigida pelo Cloudinary: sha1("timestamp=...", + api_secret),
+    // só com os parâmetros que vão na requisição (fora file/api_key/cloud_name).
+    const signature = crypto
+      .createHash("sha1")
+      .update(`timestamp=${timestamp}${CLOUDINARY_API_SECRET}`)
+      .digest("hex");
+
+    const body = new URLSearchParams();
+    body.append("file", videoBase64);
+    body.append("api_key", CLOUDINARY_API_KEY);
+    body.append("timestamp", String(timestamp));
+    body.append("signature", signature);
+
+    const uploadRes = await fetch(`https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/video/upload`, {
+      method: "POST",
+      body
+    });
+    const data = await uploadRes.json();
+    if (!uploadRes.ok) {
+      throw new Error((data.error && data.error.message) || "Falha ao enviar vídeo ao Cloudinary.");
+    }
+    json(res, 201, { url: data.secure_url });
+  } catch (e) {
+    json(res, 500, { error: e.message });
+  }
+});
+
 // ---- Contas de cliente ----
 router.post("/api/customers/signup", async (req, res) => {
   const { name, email, password, phone, address } = req.body || {};
@@ -765,7 +809,7 @@ router.put("/api/admin/orders/:id/status", requireAuth, async (req, res) => {
   const orders = await store.readJSON("orders.json", []);
   const order = orders.find((o) => o.id === req.params.id);
   if (!order) return json(res, 404, { error: "Pedido não encontrado." });
-  const allowed = ["pendente", "confirmado", "enviado", "entregue", "cancelado"];
+  const allowed = ["pendente", "confirmado", "enviado", "entregue", "cancelado", "teste"];
   if (!allowed.includes(req.body.status)) return json(res, 400, { error: "Status inválido." });
   const wasConfirmed = ["confirmado", "enviado", "entregue"].includes(order.status);
   order.status = req.body.status;
