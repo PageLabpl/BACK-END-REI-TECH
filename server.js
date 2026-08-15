@@ -17,6 +17,14 @@ const JWT_SECRET = process.env.JWT_SECRET;
 const ADMIN_PASSWORD_HASH = process.env.ADMIN_PASSWORD_HASH;
 const MP_ACCESS_TOKEN = process.env.MP_ACCESS_TOKEN;
 const FRONTEND_URL = process.env.FRONTEND_URL || "*";
+// URL completa da loja publicada, COM o caminho (ex: repositório de projeto
+// no GitHub Pages: https://usuario.github.io/nome-do-repo). Diferente de
+// FRONTEND_URL: o CORS precisa só do domínio puro (o navegador nunca manda o
+// caminho no cabeçalho Origin), mas o link de volta do Mercado Pago precisa
+// do endereço completo de verdade, senão cai numa página que não existe.
+// Se não for definida, cai no FRONTEND_URL (funciona quando o site está na
+// raiz do domínio).
+const STORE_URL = (process.env.STORE_URL || FRONTEND_URL || "").replace(/\/$/, "");
 const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || `http://localhost:${PORT}`;
 const CLOUDINARY_CLOUD_NAME = process.env.CLOUDINARY_CLOUD_NAME;
 const CLOUDINARY_API_KEY = process.env.CLOUDINARY_API_KEY;
@@ -784,15 +792,15 @@ router.post("/api/payments/create-preference", async (req, res) => {
   const order = orders.find((o) => o.id === orderId);
   if (!order) return json(res, 404, { error: "Pedido não encontrado." });
 
-  // FRONTEND_URL só serve para montar os links de retorno se for uma URL de
+  // STORE_URL só serve para montar os links de retorno se for uma URL de
   // verdade (http/https). Se estiver como "*" (comum enquanto se ajusta o CORS),
   // simplesmente não mandamos back_urls — o pagamento continua funcionando,
   // só sem o redirecionamento automático de volta pro site.
-  const validFrontend = /^https?:\/\//.test(FRONTEND_URL || "");
-  const backUrls = validFrontend ? {
-    success: `${FRONTEND_URL}/#pedido-confirmado`,
-    pending: `${FRONTEND_URL}/#pedido-pendente`,
-    failure: `${FRONTEND_URL}/#pedido-falhou`
+  const validStoreUrl = /^https?:\/\//.test(STORE_URL || "");
+  const backUrls = validStoreUrl ? {
+    success: `${STORE_URL}/#pedido-confirmado`,
+    pending: `${STORE_URL}/#pedido-pendente`,
+    failure: `${STORE_URL}/#pedido-falhou`
   } : null;
 
   try {
