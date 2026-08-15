@@ -284,6 +284,18 @@
   .stat-card span{ font-size:0.8rem; color:var(--muted); display:block; margin-bottom:8px; }
   .stat-card b{ font-family:'Space Grotesk',sans-serif; font-size:1.6rem; }
 
+  .report-bar-chart{ display:flex; align-items:flex-end; gap:4px; height:180px; padding:12px 8px 0; background:var(--card); border:1px solid var(--card-border); border-radius:12px; margin-bottom:6px; overflow-x:auto; }
+  .report-bar{ flex:1; min-width:6px; background:var(--blue); border-radius:3px 3px 0 0; position:relative; transition:background .15s; cursor:default; }
+  .report-bar:hover{ background:var(--blue-soft); }
+  .report-bar:hover .report-bar-tooltip{ display:block; }
+  .report-bar-tooltip{ display:none; position:absolute; bottom:100%; left:50%; transform:translateX(-50%); margin-bottom:6px; background:#000; color:#fff; font-size:0.72rem; padding:4px 8px; border-radius:6px; white-space:nowrap; z-index:5; }
+  .dre-table{ background:var(--card); border:1px solid var(--card-border); border-radius:12px; overflow:hidden; max-width:520px; }
+  .dre-row{ display:flex; justify-content:space-between; padding:13px 20px; border-bottom:1px solid var(--card-border); font-size:0.92rem; }
+  .dre-row:last-child{ border-bottom:none; }
+  .dre-row.dre-total{ font-weight:700; font-size:1.02rem; background:rgba(255,255,255,0.03); }
+  .dre-row.dre-negative span:last-child{ color:var(--danger); }
+  .dre-row.dre-positive span:last-child{ color:var(--success); }
+
   table{ width:100%; border-collapse:collapse; background:var(--card); border:1px solid var(--card-border); border-radius:12px; overflow:hidden; }
   thead th{ text-align:left; font-size:0.78rem; text-transform:uppercase; letter-spacing:0.04em; color:var(--muted); padding:14px 16px; border-bottom:1px solid var(--line); background:rgba(255,255,255,0.02); }
   tbody td{ padding:14px 16px; border-bottom:1px solid var(--line); font-size:0.88rem; vertical-align:middle; }
@@ -462,7 +474,7 @@
       <div class="footer-col">
         <h5>Contato</h5>
         <ul>
-          <li><a href="https://wa.me/5568992186548" target="_blank" rel="noopener">(68) 8819-8989</a></li>
+          <li><a href="https://wa.me/5568988198989" target="_blank" rel="noopener">(68) 8819-8989</a></li>
           <li><a href="mailto:contato@reitech.com">contato@reitech.com</a></li>
           <li><a onclick="goAdmin()" style="cursor:pointer">Área administrativa</a></li>
         </ul>
@@ -475,7 +487,7 @@
   </div>
 </footer>
 
-<a class="whatsapp-float" href="https://wa.me/5568992186548" target="_blank" rel="noopener" title="Falar no WhatsApp">
+<a class="whatsapp-float" href="https://wa.me/5568988198989" target="_blank" rel="noopener" title="Falar no WhatsApp">
   <svg width="26" height="26" viewBox="0 0 24 24" fill="#052014"><path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91c0 1.75.46 3.45 1.32 4.95L2 22l5.29-1.39a9.9 9.9 0 0 0 4.75 1.21h.01c5.46 0 9.91-4.45 9.91-9.91C21.96 6.45 17.5 2 12.04 2zm5.83 14.02c-.24.68-1.4 1.3-1.93 1.34-.5.05-1.02.24-3.4-.71-2.87-1.15-4.7-4.07-4.85-4.26-.14-.19-1.16-1.54-1.16-2.94s.73-2.08 1-2.37c.24-.27.53-.33.71-.33h.5c.16 0 .38-.03.58.44.24.57.8 1.97.87 2.11.07.14.11.3.02.48-.09.19-.13.3-.27.46-.14.16-.29.36-.41.48-.14.14-.28.29-.12.56.16.27.71 1.17 1.53 1.89 1.05.94 1.94 1.23 2.21 1.37.27.14.43.11.59-.07.16-.18.68-.79.86-1.06.18-.27.36-.22.6-.13.24.09 1.53.72 1.79.85.27.14.45.2.51.32.07.11.07.66-.17 1.34z"/></svg>
 </a>
 
@@ -613,6 +625,7 @@
         <button data-panel="categorias" onclick="switchAdminPanel('categorias')">Categorias</button>
         <button data-panel="banners" onclick="switchAdminPanel('banners')">Banners</button>
         <button data-panel="pedidos" onclick="switchAdminPanel('pedidos')">Vendas / Pedidos</button>
+        <button data-panel="relatorios" onclick="switchAdminPanel('relatorios')">Relatórios / DRE</button>
         <button data-panel="clientes" onclick="switchAdminPanel('clientes')">Clientes</button>
       </nav>
       <a onclick="goStorefront()" class="btn btn-outline btn-sm" style="margin-bottom:8px; cursor:pointer; text-align:center;">Ver loja</a>
@@ -664,6 +677,48 @@
         <div id="adminOrdersTable"></div>
       </section>
 
+      <!-- Relatórios / DRE -->
+      <section class="admin-panel" id="panel-relatorios">
+        <div class="admin-topbar">
+          <h2>Relatórios / DRE</h2>
+          <select id="reportPeriod" onchange="renderReports()" style="width:auto; padding:9px 14px; border-radius:9px; border:1px solid var(--card-border); background:var(--card); color:var(--text);">
+            <option value="7">Últimos 7 dias</option>
+            <option value="30" selected>Últimos 30 dias</option>
+            <option value="90">Últimos 90 dias</option>
+            <option value="all">Desde o início</option>
+          </select>
+        </div>
+
+        <div class="stat-grid" id="reportStatGrid"></div>
+
+        <div class="section-head" style="margin-bottom:14px;"><div><h2 style="font-size:1.05rem;">Faturamento por dia</h2></div></div>
+        <div id="reportBarChart" class="report-bar-chart"></div>
+
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:24px; margin-top:30px;">
+          <div>
+            <div class="section-head" style="margin-bottom:14px;"><div><h2 style="font-size:1.05rem;">Mais vendidos</h2></div></div>
+            <div id="reportTopProducts"></div>
+          </div>
+          <div>
+            <div class="section-head" style="margin-bottom:14px;"><div><h2 style="font-size:1.05rem;">Receita por categoria</h2></div></div>
+            <div id="reportByCategory"></div>
+          </div>
+        </div>
+
+        <div class="section-head" style="margin:30px 0 14px;"><div><h2 style="font-size:1.05rem;">DRE simplificado — período selecionado</h2></div></div>
+        <div id="reportDRE" class="dre-table"></div>
+        <p class="field-hint" style="margin-top:10px;">Considera só pedidos pagos (confirmado, enviado ou entregue). O CMV usa o custo cadastrado em cada produto no momento da venda — produtos sem custo informado entram na receita mas não no CMV, o que pode superestimar a margem.</p>
+
+        <div class="section-head" style="margin:30px 0 14px;"><div><h2 style="font-size:1.05rem;">Despesas operacionais</h2></div></div>
+        <form onsubmit="submitNewExpense(event)" style="display:flex; gap:10px; align-items:flex-end; margin-bottom:18px; flex-wrap:wrap;">
+          <div class="field" style="flex:2; min-width:180px; margin-bottom:0;"><label>Descrição</label><input type="text" id="newExpenseDesc" placeholder="Ex: Embalagens, aluguel, taxas" required></div>
+          <div class="field" style="flex:1; min-width:120px; margin-bottom:0;"><label>Valor (R$)</label><input type="number" step="0.01" min="0.01" id="newExpenseAmount" required></div>
+          <div class="field" style="flex:1; min-width:150px; margin-bottom:0;"><label>Data</label><input type="date" id="newExpenseDate"></div>
+          <button type="submit" class="btn btn-solid">Adicionar</button>
+        </form>
+        <div id="adminExpensesTable"></div>
+      </section>
+
       <!-- Clientes -->
       <section class="admin-panel" id="panel-clientes">
         <div class="admin-topbar"><h2>Clientes</h2></div>
@@ -706,6 +761,9 @@
       <div class="field-row">
         <div class="field"><label>Preço (R$)</label><input type="number" step="0.01" min="0" id="pfPrice" required></div>
         <div class="field"><label>Preço promocional (opcional)</label><input type="number" step="0.01" min="0" id="pfPromoPrice"></div>
+      </div>
+      <div class="field"><label>Custo do produto (opcional)</label><input type="number" step="0.01" min="0" id="pfCost" placeholder="Quanto você paga pelo produto">
+        <p class="field-hint">Usado só pra calcular a margem nos Relatórios. Se não preencher, o produto entra na receita mas não no cálculo de lucro.</p>
       </div>
       <div class="field"><label>Características (uma por linha)</label><textarea id="pfSpecs" placeholder="Ex:&#10;Bateria de 30h&#10;Bluetooth 5.3&#10;Cancelamento de ruído ativo"></textarea></div>
       <div class="field-row">
@@ -767,7 +825,7 @@
    DATA LAYER
    ============================================================ */
 const API_BASE_URL = "https://back-end-rei-tech-1.onrender.com";
-const WHATSAPP_NUMBER = "5568992186548"; // formato: código país + DDD + número
+const WHATSAPP_NUMBER = "5568988198989"; // formato: código país + DDD + número
 // Pegue em console.cloud.google.com -> APIs e serviços -> Credenciais -> ID do
 // cliente OAuth 2.0 (tipo "Aplicativo da Web"). Cole aqui o "ID do cliente"
 // (termina em .apps.googleusercontent.com — não é segredo, pode ficar no
@@ -778,6 +836,7 @@ const GOOGLE_CLIENT_ID = "998095832148-frkga8a3istm1h7rlmguu2gunogdlkla.apps.goo
 let products = [];
 let orders = [];
 let categories = []; // seções/departamentos, criados livremente pelo admin
+let expenses = []; // despesas operacionais lançadas no admin, usadas no DRE
 let banners = []; // banners ativos exibidos no carrossel da loja (público)
 let adminBanners = []; // lista completa (inclusive ocultos) usada só no painel admin
 let activeCategoryFilter = null; // categoryId selecionado no menu, ou null = "Todos"
@@ -1625,12 +1684,15 @@ async function renderAllAdminPanels(){
   await loadOrders();
   await loadCategories();
   await loadAdminBanners();
+  await loadExpenses();
   renderDashboard();
   renderAdminProducts();
   renderAdminOrders();
   renderAdminCustomers();
   renderAdminCategories();
   renderAdminBanners();
+  renderAdminExpenses();
+  renderReports();
 }
 
 /* ---- Categories admin ---- */
@@ -1825,6 +1887,168 @@ function renderDashboard(){
   </tbody></table>`;
 }
 
+/* ---- Expenses admin ---- */
+async function loadExpenses(){
+  try{
+    expenses = await api("/api/admin/expenses", { auth: true });
+  }catch(e){
+    expenses = [];
+  }
+}
+function renderAdminExpenses(){
+  const box = document.getElementById('adminExpensesTable');
+  if(!box) return;
+  if(expenses.length === 0){ box.innerHTML = `<div class="empty-admin">Nenhuma despesa lançada ainda.</div>`; return; }
+  const sorted = [...expenses].sort((a,b) => new Date(b.date) - new Date(a.date));
+  box.innerHTML = `<table><thead><tr><th>Descrição</th><th>Valor</th><th>Data</th><th>Ações</th></tr></thead><tbody>
+    ${sorted.map(e => `<tr>
+      <td>${escapeHtml(e.description)}</td>
+      <td>${money(e.amount)}</td>
+      <td>${formatDate(e.date)}</td>
+      <td class="row-actions"><button class="btn btn-danger btn-sm" onclick="deleteExpense('${e.id}')">Excluir</button></td>
+    </tr>`).join('')}
+  </tbody></table>`;
+}
+async function submitNewExpense(e){
+  e.preventDefault();
+  const description = document.getElementById('newExpenseDesc').value.trim();
+  const amount = parseFloat(document.getElementById('newExpenseAmount').value);
+  const date = document.getElementById('newExpenseDate').value || undefined;
+  if(!description || !amount) return;
+  try{
+    await api("/api/admin/expenses", { method: "POST", auth: true, body: { description, amount, date } });
+    document.getElementById('newExpenseDesc').value = '';
+    document.getElementById('newExpenseAmount').value = '';
+    document.getElementById('newExpenseDate').value = '';
+    await loadExpenses();
+    renderAdminExpenses();
+    renderReports();
+    showToast("Despesa lançada.");
+  }catch(err){
+    showToast(err.message);
+  }
+}
+async function deleteExpense(id){
+  if(!confirm("Excluir esta despesa?")) return;
+  try{
+    await api("/api/admin/expenses/" + id, { method: "DELETE", auth: true });
+    await loadExpenses();
+    renderAdminExpenses();
+    renderReports();
+    showToast("Despesa excluída.");
+  }catch(err){
+    showToast(err.message);
+  }
+}
+
+/* ---- Reports / DRE ---- */
+const PAID_STATUSES = ["confirmado", "enviado", "entregue"];
+function reportPeriodStart(){
+  const sel = document.getElementById('reportPeriod');
+  const val = sel ? sel.value : "30";
+  if(val === "all") return null;
+  const days = parseInt(val, 10);
+  const d = new Date();
+  d.setHours(0,0,0,0);
+  d.setDate(d.getDate() - (days - 1));
+  return d;
+}
+function dayKey(dateStr){
+  return new Date(dateStr).toISOString().slice(0,10);
+}
+function renderReports(){
+  const grid = document.getElementById('reportStatGrid');
+  if(!grid) return; // painel ainda não existe no DOM (primeira carga)
+
+  const start = reportPeriodStart();
+  const paidOrders = orders.filter(o => PAID_STATUSES.includes(o.status) && (!start || new Date(o.date) >= start));
+
+  let receita = 0, cmv = 0, itemsSemCusto = 0;
+  const byDay = {};
+  const byProduct = {};
+  const byCategory = {};
+
+  paidOrders.forEach(o => {
+    const key = dayKey(o.date);
+    byDay[key] = (byDay[key] || 0) + Number(o.total || 0);
+    receita += Number(o.total || 0);
+    o.items.forEach(item => {
+      const lineTotal = Number(item.price) * item.qty;
+      if(!byProduct[item.productId]) byProduct[item.productId] = { name: item.name, qty: 0, revenue: 0 };
+      byProduct[item.productId].qty += item.qty;
+      byProduct[item.productId].revenue += lineTotal;
+
+      if(item.cost !== null && item.cost !== undefined){
+        cmv += Number(item.cost) * item.qty;
+      } else {
+        itemsSemCusto++;
+      }
+
+      const product = products.find(p => p.id === item.productId);
+      const catName = product && product.categoryId ? (categories.find(c => c.id === product.categoryId)?.name || 'Sem categoria') : 'Sem categoria';
+      byCategory[catName] = (byCategory[catName] || 0) + lineTotal;
+    });
+  });
+
+  const periodExpenses = expenses.filter(e => !start || new Date(e.date) >= start);
+  const totalExpenses = periodExpenses.reduce((s,e) => s + Number(e.amount), 0);
+  const lucroBruto = receita - cmv;
+  const lucroLiquido = lucroBruto - totalExpenses;
+  const margemBruta = receita > 0 ? (lucroBruto / receita) * 100 : 0;
+  const margemLiquida = receita > 0 ? (lucroLiquido / receita) * 100 : 0;
+  const ticketMedio = paidOrders.length ? receita / paidOrders.length : 0;
+
+  grid.innerHTML = `
+    <div class="stat-card"><span>Receita bruta (pago)</span><b>${money(receita)}</b></div>
+    <div class="stat-card"><span>Pedidos pagos</span><b>${paidOrders.length}</b></div>
+    <div class="stat-card"><span>Ticket médio</span><b>${money(ticketMedio)}</b></div>
+    <div class="stat-card"><span>Lucro líquido estimado</span><b style="color:${lucroLiquido >= 0 ? 'var(--success)' : 'var(--danger)'}">${money(lucroLiquido)}</b></div>
+  `;
+
+  // Gráfico de barras por dia
+  const chart = document.getElementById('reportBarChart');
+  const dayEntries = Object.entries(byDay).sort((a,b) => a[0].localeCompare(b[0]));
+  if(dayEntries.length === 0){
+    chart.innerHTML = `<div class="empty-admin" style="border:none">Nenhuma venda paga nesse período.</div>`;
+  }else{
+    const max = Math.max(...dayEntries.map(([,v]) => v), 1);
+    chart.innerHTML = dayEntries.map(([day, val]) => {
+      const h = Math.max(4, Math.round((val / max) * 160));
+      const label = new Date(day + 'T12:00:00').toLocaleDateString('pt-BR', { day:'2-digit', month:'2-digit' });
+      return `<div class="report-bar" style="height:${h}px"><span class="report-bar-tooltip">${label}: ${money(val)}</span></div>`;
+    }).join('');
+  }
+
+  // Mais vendidos
+  const topBox = document.getElementById('reportTopProducts');
+  const topList = Object.values(byProduct).sort((a,b) => b.revenue - a.revenue).slice(0, 8);
+  topBox.innerHTML = topList.length === 0
+    ? `<div class="empty-admin">Sem vendas no período.</div>`
+    : `<table><thead><tr><th>Produto</th><th>Qtd.</th><th>Receita</th></tr></thead><tbody>
+        ${topList.map(p => `<tr><td>${escapeHtml(p.name)}</td><td>${p.qty}</td><td>${money(p.revenue)}</td></tr>`).join('')}
+      </tbody></table>`;
+
+  // Receita por categoria
+  const catBox = document.getElementById('reportByCategory');
+  const catList = Object.entries(byCategory).sort((a,b) => b[1] - a[1]);
+  catBox.innerHTML = catList.length === 0
+    ? `<div class="empty-admin">Sem vendas no período.</div>`
+    : `<table><thead><tr><th>Categoria</th><th>Receita</th></tr></thead><tbody>
+        ${catList.map(([name, val]) => `<tr><td>${escapeHtml(name)}</td><td>${money(val)}</td></tr>`).join('')}
+      </tbody></table>`;
+
+  // DRE
+  const dreBox = document.getElementById('reportDRE');
+  dreBox.innerHTML = `
+    <div class="dre-row"><span>Receita bruta</span><span>${money(receita)}</span></div>
+    <div class="dre-row dre-negative"><span>(-) CMV — custo da mercadoria vendida</span><span>${money(cmv)}</span></div>
+    <div class="dre-row dre-total"><span>(=) Lucro bruto</span><span>${money(lucroBruto)} <small style="font-weight:400;color:var(--muted)">(${margemBruta.toFixed(1)}%)</small></span></div>
+    <div class="dre-row dre-negative"><span>(-) Despesas operacionais</span><span>${money(totalExpenses)}</span></div>
+    <div class="dre-row dre-total ${lucroLiquido >= 0 ? 'dre-positive' : 'dre-negative'}"><span>(=) Lucro líquido</span><span>${money(lucroLiquido)} <small style="font-weight:400;color:var(--muted)">(${margemLiquida.toFixed(1)}%)</small></span></div>
+    ${itemsSemCusto > 0 ? `<div class="dre-row" style="font-size:0.78rem;color:var(--muted)"><span colspan="2">⚠ ${itemsSemCusto} item(ns) vendido(s) sem custo cadastrado — CMV pode estar subestimado.</span></div>` : ''}
+  `;
+}
+
 /* ---- Products admin ---- */
 function renderAdminProducts(){
   const box = document.getElementById('adminProductsTable');
@@ -1868,6 +2092,7 @@ function openProductForm(id){
     if(p.image){ preview.src = p.image; preview.style.display = 'block'; } else { preview.style.display = 'none'; }
     document.getElementById('pfPrice').value = p.price;
     document.getElementById('pfPromoPrice').value = p.promoPrice || '';
+    document.getElementById('pfCost').value = (p.cost !== null && p.cost !== undefined) ? p.cost : '';
     document.getElementById('pfCategory').value = p.category || 'proprio';
     document.getElementById('pfSection').value = p.categoryId || '';
     document.getElementById('pfBadge').value = p.badge || '';
@@ -1991,6 +2216,7 @@ async function submitProductForm(e){
     image: document.getElementById('pfImage').value.trim(),
     images: pfExtraImagesState.filter(i => i.url && i.url.trim()).map(i => ({ url: i.url.trim(), color: (i.color || '').trim() })),
     price: parseFloat(document.getElementById('pfPrice').value),
+    cost: document.getElementById('pfCost').value !== '' ? parseFloat(document.getElementById('pfCost').value) : null,
     promoPrice: promo ? parseFloat(promo) : null,
     category: document.getElementById('pfCategory').value,
     categoryId: document.getElementById('pfSection').value || null,
@@ -2161,3 +2387,4 @@ init();
 
 </body>
 </html>
+

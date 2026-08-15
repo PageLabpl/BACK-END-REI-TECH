@@ -175,6 +175,7 @@ router.post("/api/admin/products", requireAuth, async (req, res) => {
     image: String(p.image || ""),
     images: sanitizeProductImages(p.images),
     price: Number(p.price),
+    cost: p.cost !== undefined && p.cost !== null && p.cost !== "" ? Number(p.cost) : null,
     promoPrice: p.promoPrice ? Number(p.promoPrice) : null,
     category: p.category === "dropship" ? "dropship" : "proprio",
     categoryId: p.categoryId ? String(p.categoryId) : null,
@@ -199,6 +200,7 @@ router.put("/api/admin/products/:id", requireAuth, async (req, res) => {
     image: p.image !== undefined ? String(p.image) : products[idx].image,
     images: p.images !== undefined ? sanitizeProductImages(p.images) : (products[idx].images || []),
     price: p.price !== undefined ? Number(p.price) : products[idx].price,
+    cost: p.cost !== undefined ? (p.cost !== null && p.cost !== "" ? Number(p.cost) : null) : products[idx].cost,
     promoPrice: p.promoPrice !== undefined ? (p.promoPrice ? Number(p.promoPrice) : null) : products[idx].promoPrice,
     category: p.category !== undefined ? (p.category === "dropship" ? "dropship" : "proprio") : products[idx].category,
     categoryId: p.categoryId !== undefined ? (p.categoryId ? String(p.categoryId) : null) : products[idx].categoryId,
@@ -338,6 +340,40 @@ router.delete("/api/admin/banners/:id", requireAuth, async (req, res) => {
   if (!exists) return json(res, 404, { error: "Banner não encontrado." });
   banners = banners.filter((x) => x.id !== req.params.id);
   await store.writeJSON("banners.json", banners);
+  json(res, 200, { deleted: true });
+});
+
+// ---- Despesas operacionais (pro DRE: aluguel, embalagem, taxas, etc.) ----
+router.get("/api/admin/expenses", requireAuth, async (req, res) => {
+  const expenses = await store.readJSON("expenses.json", []);
+  json(res, 200, expenses);
+});
+
+router.post("/api/admin/expenses", requireAuth, async (req, res) => {
+  const expenses = await store.readJSON("expenses.json", []);
+  const e = req.body || {};
+  const description = String(e.description || "").trim();
+  const amount = Number(e.amount);
+  if (!description || !amount || amount <= 0) {
+    return json(res, 400, { error: "Descrição e valor (maior que zero) são obrigatórios." });
+  }
+  const expense = {
+    id: "exp_" + crypto.randomBytes(6).toString("hex"),
+    description,
+    amount,
+    date: e.date ? new Date(e.date).toISOString() : new Date().toISOString()
+  };
+  expenses.push(expense);
+  await store.writeJSON("expenses.json", expenses);
+  json(res, 201, expense);
+});
+
+router.delete("/api/admin/expenses/:id", requireAuth, async (req, res) => {
+  let expenses = await store.readJSON("expenses.json", []);
+  const exists = expenses.some((x) => x.id === req.params.id);
+  if (!exists) return json(res, 404, { error: "Despesa não encontrada." });
+  expenses = expenses.filter((x) => x.id !== req.params.id);
+  await store.writeJSON("expenses.json", expenses);
   json(res, 200, { deleted: true });
 });
 
@@ -535,7 +571,7 @@ router.post("/api/orders", async (req, res) => {
     const unitPrice = hasPromo ? Number(product.promoPrice) : Number(product.price);
     const qty = Math.max(1, parseInt(item.qty, 10) || 1);
     total += unitPrice * qty;
-    resolvedItems.push({ productId: product.id, name: product.name, price: unitPrice, qty });
+    resolvedItems.push({ productId: product.id, name: product.name, price: unitPrice, qty, cost: product.cost !== undefined && product.cost !== null ? Number(product.cost) : null });
   }
   if (resolvedItems.length === 0) return json(res, 400, { error: "Nenhum item válido no pedido." });
 
