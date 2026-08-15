@@ -236,6 +236,12 @@
   .field input:focus, .field textarea:focus, .field select:focus{ outline:2px solid var(--blue-soft); outline-offset:1px; border-color:transparent; }
   .field textarea{ resize:vertical; min-height:80px; }
   .field-row{ display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+  .field-row-cep{ display:grid; grid-template-columns:160px 1fr; gap:14px; align-items:end; }
+  .field-row-3{ display:grid; grid-template-columns:1fr 1fr 90px; gap:14px; }
+  .cep-status{ font-size:0.76rem; margin-top:6px; min-height:16px; }
+  .cep-status.loading{ color:var(--muted); }
+  .cep-status.ok{ color:var(--success); }
+  .cep-status.error{ color:var(--danger); }
   .field-hint{ font-size:0.76rem; color:var(--muted); margin-top:6px; }
   .extra-image-row{ display:flex; gap:12px; align-items:center; margin-bottom:10px; padding:10px; border:1px solid var(--card-border); border-radius:10px; }
   .extra-image-row img{ width:52px; height:52px; border-radius:7px; object-fit:cover; background:#080b14; border:1px solid var(--card-border); flex-shrink:0; }
@@ -325,6 +331,8 @@
     .hero{ padding:64px 0 40px; }
     .wrap{ padding:0 20px; }
     .field-row{ grid-template-columns:1fr; }
+    .field-row-cep{ grid-template-columns:1fr; }
+    .field-row-3{ grid-template-columns:1fr; }
     .admin-shell{ grid-template-columns:1fr; }
     .admin-sidebar{ border-right:none; border-bottom:1px solid var(--line); flex-direction:row; overflow-x:auto; padding:14px; }
     .admin-sidebar .brand{ display:none; }
@@ -530,7 +538,21 @@
       <div class="field"><label>Nome completo</label><input type="text" id="ckName" required></div>
       <div class="field"><label>WhatsApp / telefone</label><input type="tel" id="ckPhone" required placeholder="(68) 90000-0000"></div>
       <div class="field"><label>E-mail</label><input type="email" id="ckEmail" required></div>
-      <div class="field"><label>Endereço de entrega</label><textarea id="ckAddress" required placeholder="Rua, número, bairro, cidade - UF, CEP"></textarea></div>
+      <div class="field"><label>Endereço de entrega</label></div>
+      <div class="field-row-cep">
+        <div class="field"><label>CEP</label><input type="text" id="ckCep" required inputmode="numeric" maxlength="9" placeholder="00000-000"></div>
+        <div class="field" style="margin-bottom:0"><span class="cep-status" id="ckCepStatus"></span></div>
+      </div>
+      <div class="field"><label>Rua</label><input type="text" id="ckStreet" required></div>
+      <div class="field-row">
+        <div class="field"><label>Número</label><input type="text" id="ckNumber" required></div>
+        <div class="field"><label>Complemento (opcional)</label><input type="text" id="ckComplement" placeholder="Apto, bloco, referência..."></div>
+      </div>
+      <div class="field"><label>Bairro</label><input type="text" id="ckNeighborhood" required></div>
+      <div class="field-row-3">
+        <div class="field"><label>Cidade</label><input type="text" id="ckCity" required></div>
+        <div class="field"><label>Estado</label><input type="text" id="ckState" required maxlength="2" placeholder="UF" style="text-transform:uppercase"></div>
+      </div>
       <button type="submit" class="btn btn-solid btn-full" id="checkoutSubmitBtn">Ir para o pagamento</button>
       <p class="field-hint" style="text-align:center;margin-top:10px">Você será redirecionado ao Mercado Pago para concluir o pagamento com segurança.</p>
     </form>
@@ -569,6 +591,21 @@
       <div class="field"><label>WhatsApp / telefone (opcional)</label><input type="tel" id="signupPhone" placeholder="(68) 90000-0000"></div>
       <div class="field"><label>Senha</label><input type="password" id="signupPassword" required minlength="8"></div>
       <div class="field"><label>Confirmar senha</label><input type="password" id="signupPasswordConfirm" required minlength="8"></div>
+      <div class="field"><label>Endereço de entrega</label></div>
+      <div class="field-row-cep">
+        <div class="field"><label>CEP</label><input type="text" id="signupCep" required inputmode="numeric" maxlength="9" placeholder="00000-000"></div>
+        <div class="field" style="margin-bottom:0"><span class="cep-status" id="signupCepStatus"></span></div>
+      </div>
+      <div class="field"><label>Rua</label><input type="text" id="signupStreet" required></div>
+      <div class="field-row">
+        <div class="field"><label>Número</label><input type="text" id="signupNumber" required></div>
+        <div class="field"><label>Complemento (opcional)</label><input type="text" id="signupComplement" placeholder="Apto, bloco, referência..."></div>
+      </div>
+      <div class="field"><label>Bairro</label><input type="text" id="signupNeighborhood" required></div>
+      <div class="field-row-3">
+        <div class="field"><label>Cidade</label><input type="text" id="signupCity" required></div>
+        <div class="field"><label>Estado</label><input type="text" id="signupState" required maxlength="2" placeholder="UF" style="text-transform:uppercase"></div>
+      </div>
       <button type="submit" class="btn btn-solid btn-full" id="signupSubmitBtn">Criar conta</button>
       <p class="field-hint" id="signupError" style="display:none;color:var(--danger)"></p>
     </form>
@@ -587,7 +624,21 @@
     <div id="accountProfilePanel">
       <div class="field"><label>Nome</label><input type="text" id="accName"></div>
       <div class="field"><label>Telefone</label><input type="tel" id="accPhone"></div>
-      <div class="field"><label>Endereço padrão de entrega</label><textarea id="accAddress"></textarea></div>
+      <div class="field"><label>Endereço padrão de entrega</label></div>
+      <div class="field-row-cep">
+        <div class="field"><label>CEP</label><input type="text" id="accCep" inputmode="numeric" maxlength="9" placeholder="00000-000"></div>
+        <div class="field" style="margin-bottom:0"><span class="cep-status" id="accCepStatus"></span></div>
+      </div>
+      <div class="field"><label>Rua</label><input type="text" id="accStreet"></div>
+      <div class="field-row">
+        <div class="field"><label>Número</label><input type="text" id="accNumber"></div>
+        <div class="field"><label>Complemento (opcional)</label><input type="text" id="accComplement" placeholder="Apto, bloco, referência..."></div>
+      </div>
+      <div class="field"><label>Bairro</label><input type="text" id="accNeighborhood"></div>
+      <div class="field-row-3">
+        <div class="field"><label>Cidade</label><input type="text" id="accCity"></div>
+        <div class="field"><label>Estado</label><input type="text" id="accState" maxlength="2" placeholder="UF" style="text-transform:uppercase"></div>
+      </div>
       <button class="btn btn-solid btn-full" onclick="saveAccountProfile()" id="accSaveBtn">Salvar alterações</button>
       <button class="btn btn-outline btn-full" style="margin-top:10px" onclick="customerLogout()">Sair da conta</button>
     </div>
@@ -1299,6 +1350,69 @@ async function submitCustomerLogin(e){
   btn.textContent = "Entrar";
 }
 
+/* ---- Endereço estruturado: preenchimento automático por CEP (ViaCEP) ---- */
+function readAddressFields(prefix){
+  return {
+    cep: document.getElementById(prefix + 'Cep').value.replace(/\D/g, ''),
+    street: document.getElementById(prefix + 'Street').value.trim(),
+    number: document.getElementById(prefix + 'Number').value.trim(),
+    complement: document.getElementById(prefix + 'Complement').value.trim(),
+    neighborhood: document.getElementById(prefix + 'Neighborhood').value.trim(),
+    city: document.getElementById(prefix + 'City').value.trim(),
+    state: document.getElementById(prefix + 'State').value.trim().toUpperCase()
+  };
+}
+function fillAddressFields(prefix, addr){
+  // Contas antigas (de antes dessa atualização) guardaram o endereço como
+  // um texto único — coloca esse texto no campo "Rua" pra não sumir com o
+  // que o cliente já tinha digitado, e ele só completa o resto uma vez.
+  if(typeof addr === 'string'){
+    addr = addr.trim() ? { street: addr.trim() } : {};
+  }
+  addr = addr || {};
+  const cep = (addr.cep || '').replace(/\D/g, '');
+  document.getElementById(prefix + 'Cep').value = cep ? cep.replace(/(\d{5})(\d{0,3})/, '$1-$2') : '';
+  document.getElementById(prefix + 'Street').value = addr.street || '';
+  document.getElementById(prefix + 'Number').value = addr.number || '';
+  document.getElementById(prefix + 'Complement').value = addr.complement || '';
+  document.getElementById(prefix + 'Neighborhood').value = addr.neighborhood || '';
+  document.getElementById(prefix + 'City').value = addr.city || '';
+  document.getElementById(prefix + 'State').value = addr.state || '';
+}
+function setupCepAutoFill(prefix){
+  const cepInput = document.getElementById(prefix + 'Cep');
+  const statusEl = document.getElementById(prefix + 'CepStatus');
+  if(!cepInput) return;
+  cepInput.addEventListener('input', () => {
+    const digits = cepInput.value.replace(/\D/g, '').slice(0, 8);
+    cepInput.value = digits.length > 5 ? digits.replace(/(\d{5})(\d{0,3})/, '$1-$2') : digits;
+    if(digits.length === 8) lookupCep(prefix, digits);
+    else if(statusEl){ statusEl.textContent = ''; statusEl.className = 'cep-status'; }
+  });
+}
+async function lookupCep(prefix, cep){
+  const statusEl = document.getElementById(prefix + 'CepStatus');
+  if(statusEl){ statusEl.textContent = 'Buscando endereço...'; statusEl.className = 'cep-status loading'; }
+  try{
+    const res = await fetch(`https://viacep.com.br/ws/${cep}/json/`);
+    const data = await res.json();
+    if(data.erro){
+      if(statusEl){ statusEl.textContent = 'CEP não encontrado — preencha manualmente.'; statusEl.className = 'cep-status error'; }
+      return;
+    }
+    document.getElementById(prefix + 'Street').value = data.logradouro || '';
+    document.getElementById(prefix + 'Neighborhood').value = data.bairro || '';
+    document.getElementById(prefix + 'City').value = data.localidade || '';
+    document.getElementById(prefix + 'State').value = data.uf || '';
+    if(statusEl){ statusEl.textContent = 'Endereço encontrado ✓'; statusEl.className = 'cep-status ok'; }
+    const numberEl = document.getElementById(prefix + 'Number');
+    if(numberEl) numberEl.focus();
+  }catch(e){
+    if(statusEl){ statusEl.textContent = 'Não foi possível buscar o CEP agora — preencha manualmente.'; statusEl.className = 'cep-status error'; }
+  }
+}
+['signup','acc','ck'].forEach(setupCepAutoFill);
+
 async function submitCustomerSignup(e){
   e.preventDefault();
   const btn = document.getElementById('signupSubmitBtn');
@@ -1322,7 +1436,8 @@ async function submitCustomerSignup(e){
         name: document.getElementById('signupName').value.trim(),
         email: document.getElementById('signupEmail').value.trim(),
         phone: document.getElementById('signupPhone').value.trim(),
-        password
+        password,
+        address: readAddressFields('signup')
       }
     });
     customerToken = data.token;
@@ -1390,7 +1505,7 @@ function customerLogout(showMsg){
 function openAccountModal(){
   document.getElementById('accName').value = currentCustomer.name || '';
   document.getElementById('accPhone').value = currentCustomer.phone || '';
-  document.getElementById('accAddress').value = currentCustomer.address || '';
+  fillAddressFields('acc', currentCustomer.address);
   switchAccountTab('profile');
   document.getElementById('accountOverlay').classList.add('show');
 }
@@ -1415,7 +1530,7 @@ async function saveAccountProfile(){
       body: {
         name: document.getElementById('accName').value.trim(),
         phone: document.getElementById('accPhone').value.trim(),
-        address: document.getElementById('accAddress').value.trim()
+        address: readAddressFields('acc')
       }
     });
     updateAccountButtonUI();
@@ -1475,7 +1590,7 @@ function applyLoggedCustomerToCheckout(){
     document.getElementById('ckName').value = currentCustomer.name || '';
     document.getElementById('ckPhone').value = currentCustomer.phone || '';
     document.getElementById('ckEmail').value = currentCustomer.email || '';
-    document.getElementById('ckAddress').value = currentCustomer.address || '';
+    fillAddressFields('ck', currentCustomer.address);
     document.getElementById('checkoutLoggedText').textContent = "Comprando como " + currentCustomer.name;
     note.style.display = 'flex';
   }else{
@@ -1492,7 +1607,7 @@ async function submitOrder(e){
     name: document.getElementById('ckName').value.trim(),
     phone: document.getElementById('ckPhone').value.trim(),
     email: document.getElementById('ckEmail').value.trim(),
-    address: document.getElementById('ckAddress').value.trim()
+    address: readAddressFields('ck')
   };
   const items = cart.map(c => ({ productId: c.productId, qty: c.qty }));
 
@@ -2258,11 +2373,12 @@ function renderAdminOrders(){
   const box = document.getElementById('adminOrdersTable');
   if(orders.length === 0){ box.innerHTML = `<div class="empty-admin">Nenhum pedido registrado ainda.</div>`; return; }
   const sorted = [...orders].sort((a,b)=> new Date(b.date) - new Date(a.date));
-  box.innerHTML = `<table><thead><tr><th>Data</th><th>Cliente</th><th>Contato</th><th>Itens</th><th>Total</th><th>Status</th></tr></thead><tbody>
+  box.innerHTML = `<table><thead><tr><th>Data</th><th>Cliente</th><th>Contato</th><th>Endereço</th><th>Itens</th><th>Total</th><th>Status</th></tr></thead><tbody>
     ${sorted.map(o => `<tr>
       <td>${formatDate(o.date)}</td>
       <td>${escapeHtml(o.customer.name)}</td>
       <td>${escapeHtml(o.customer.phone)}</td>
+      <td style="max-width:220px">${escapeHtml(o.customer.addressText || '')}</td>
       <td>${o.items.map(i => `${i.qty}x ${escapeHtml(i.name)}`).join('<br>')}</td>
       <td>${money(o.total)}</td>
       <td>
