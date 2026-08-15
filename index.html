@@ -493,7 +493,7 @@
       <div class="footer-col">
         <h5>Contato</h5>
         <ul>
-          <li><a href="https://wa.me/5568988198989" target="_blank" rel="noopener">(68) 8819-8989</a></li>
+          <li><a href="https://wa.me/5568992186548" target="_blank" rel="noopener">(68) 99218-6548</a></li>
           <li><a href="mailto:contato@reitech.com">contato@reitech.com</a></li>
         </ul>
       </div>
@@ -505,7 +505,7 @@
   </div>
 </footer>
 
-<a class="whatsapp-float" href="https://wa.me/5568988198989" target="_blank" rel="noopener" title="Falar no WhatsApp">
+<a class="whatsapp-float" href="https://wa.me/5568992186548" target="_blank" rel="noopener" title="Falar no WhatsApp">
   <svg width="26" height="26" viewBox="0 0 24 24" fill="#052014"><path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91c0 1.75.46 3.45 1.32 4.95L2 22l5.29-1.39a9.9 9.9 0 0 0 4.75 1.21h.01c5.46 0 9.91-4.45 9.91-9.91C21.96 6.45 17.5 2 12.04 2zm5.83 14.02c-.24.68-1.4 1.3-1.93 1.34-.5.05-1.02.24-3.4-.71-2.87-1.15-4.7-4.07-4.85-4.26-.14-.19-1.16-1.54-1.16-2.94s.73-2.08 1-2.37c.24-.27.53-.33.71-.33h.5c.16 0 .38-.03.58.44.24.57.8 1.97.87 2.11.07.14.11.3.02.48-.09.19-.13.3-.27.46-.14.16-.29.36-.41.48-.14.14-.28.29-.12.56.16.27.71 1.17 1.53 1.89 1.05.94 1.94 1.23 2.21 1.37.27.14.43.11.59-.07.16-.18.68-.79.86-1.06.18-.27.36-.22.6-.13.24.09 1.53.72 1.79.85.27.14.45.2.51.32.07.11.07.66-.17 1.34z"/></svg>
 </a>
 
@@ -762,7 +762,15 @@
 
       <!-- Pedidos -->
       <section class="admin-panel" id="panel-pedidos">
-        <div class="admin-topbar"><h2>Vendas / Pedidos</h2></div>
+        <div class="admin-topbar">
+          <h2>Vendas / Pedidos</h2>
+          <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+            <select id="ordersMonthFilter" onchange="renderAdminOrders()" style="width:auto; padding:9px 14px; border-radius:9px; border:1px solid var(--card-border); background:var(--card); color:var(--text);"></select>
+            <input type="date" id="ordersFromFilter" onchange="renderAdminOrders()" title="De" style="padding:8px 12px; border-radius:9px; border:1px solid var(--card-border); background:var(--card); color:var(--text);">
+            <input type="date" id="ordersToFilter" onchange="renderAdminOrders()" title="Até" style="padding:8px 12px; border-radius:9px; border:1px solid var(--card-border); background:var(--card); color:var(--text);">
+            <button type="button" class="btn btn-outline btn-sm" onclick="clearOrdersFilters()">Limpar filtro</button>
+          </div>
+        </div>
         <div id="adminOrdersTable"></div>
       </section>
 
@@ -926,7 +934,7 @@
    DATA LAYER
    ============================================================ */
 const API_BASE_URL = "https://back-end-rei-tech-1.onrender.com";
-const WHATSAPP_NUMBER = "5568988198989"; // formato: código país + DDD + número
+const WHATSAPP_NUMBER = "5568992186548"; // formato: código país + DDD + número
 // Pegue em console.cloud.google.com -> APIs e serviços -> Credenciais -> ID do
 // cliente OAuth 2.0 (tipo "Aplicativo da Web"). Cole aqui o "ID do cliente"
 // (termina em .apps.googleusercontent.com — não é segredo, pode ficar no
@@ -2551,10 +2559,44 @@ function formatDate(iso){
   const d = new Date(iso);
   return d.toLocaleDateString('pt-BR') + ' ' + d.toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'});
 }
+function populateOrdersMonthOptions(){
+  const sel = document.getElementById('ordersMonthFilter');
+  if(!sel) return;
+  const prevValue = sel.value || 'all';
+  const monthKeys = [...new Set(orders.map(o => orderMonthKey(o.date)))].sort().reverse();
+  sel.innerHTML = `<option value="all">Todos os meses</option>` +
+    monthKeys.map(k => `<option value="${k}">${monthKeyLabel(k)}</option>`).join('');
+  sel.value = monthKeys.includes(prevValue) || prevValue === 'all' ? prevValue : 'all';
+}
+function clearOrdersFilters(){
+  document.getElementById('ordersMonthFilter').value = 'all';
+  document.getElementById('ordersFromFilter').value = '';
+  document.getElementById('ordersToFilter').value = '';
+  renderAdminOrders();
+}
 function renderAdminOrders(){
+  populateOrdersMonthOptions();
   const box = document.getElementById('adminOrdersTable');
+  const month = document.getElementById('ordersMonthFilter').value;
+  const fromVal = document.getElementById('ordersFromFilter').value;
+  const toVal = document.getElementById('ordersToFilter').value;
+
+  let filtered = orders;
+  if(month !== 'all'){
+    filtered = filtered.filter(o => orderMonthKey(o.date) === month);
+  }
+  if(fromVal){
+    const from = new Date(fromVal + 'T00:00:00');
+    filtered = filtered.filter(o => new Date(o.date) >= from);
+  }
+  if(toVal){
+    const to = new Date(toVal + 'T23:59:59');
+    filtered = filtered.filter(o => new Date(o.date) <= to);
+  }
+
   if(orders.length === 0){ box.innerHTML = `<div class="empty-admin">Nenhum pedido registrado ainda.</div>`; return; }
-  const sorted = [...orders].sort((a,b)=> new Date(b.date) - new Date(a.date));
+  if(filtered.length === 0){ box.innerHTML = `<div class="empty-admin">Nenhum pedido encontrado nesse período.</div>`; return; }
+  const sorted = [...filtered].sort((a,b)=> new Date(b.date) - new Date(a.date));
   box.innerHTML = `<table><thead><tr><th>Data</th><th>Cliente</th><th>Contato</th><th>Endereço de entrega</th><th>Itens</th><th>Total</th><th>Status</th></tr></thead><tbody>
     ${sorted.map(o => `<tr>
       <td>${formatDate(o.date)}</td>
