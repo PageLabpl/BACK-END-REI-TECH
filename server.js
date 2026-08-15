@@ -10,6 +10,7 @@ const store = require("./lib/store");
 const auth = require("./lib/auth");
 const mercadopago = require("./lib/mercadopago");
 const cloudinary = require("./lib/cloudinary");
+const email = require("./lib/email");
 
 const PORT = process.env.PORT || 3001;
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -22,6 +23,9 @@ const CLOUDINARY_API_KEY = process.env.CLOUDINARY_API_KEY;
 const CLOUDINARY_API_SECRET = process.env.CLOUDINARY_API_SECRET;
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID; // login "Continuar com Google" dos clientes
 const CUSTOMER_TOKEN_TTL = 30 * 24 * 60 * 60; // 30 dias — cliente espera continuar logado ao voltar
+const RESEND_API_KEY = process.env.RESEND_API_KEY;
+const RESEND_FROM_EMAIL = process.env.RESEND_FROM_EMAIL;
+const STORE_NAME = process.env.STORE_NAME || "REI TECH";
 
 if (!JWT_SECRET || !ADMIN_PASSWORD_HASH) {
   console.error(
@@ -189,6 +193,27 @@ function sanitizeProductImages(arr) {
     }))
     .filter((i) => i.url)
     .slice(0, 8);
+}
+
+// Dispara o e-mail de confirmação de venda (usado tanto no webhook do
+// Mercado Pago quanto na troca manual de status pelo admin). Nunca lança
+// erro pra fora — só loga — porque quem chama isso não deve quebrar por
+// causa de uma falha no envio do e-mail.
+async function triggerOrderConfirmationEmail(order) {
+  if (!RESEND_API_KEY || !RESEND_FROM_EMAIL) {
+    console.warn("[AVISO] RESEND_API_KEY/RESEND_FROM_EMAIL não configurados — e-mail de confirmação não enviado.");
+    return;
+  }
+  try {
+    await email.sendOrderConfirmation({
+      order,
+      apiKey: RESEND_API_KEY,
+      fromEmail: RESEND_FROM_EMAIL,
+      storeName: STORE_NAME
+    });
+  } catch (emailErr) {
+    console.error("Erro ao enviar e-mail de confirmação:", emailErr.message);
+  }
 }
 
 const router = new Router();
@@ -713,8 +738,17 @@ router.put("/api/admin/orders/:id/status", requireAuth, async (req, res) => {
   if (!order) return json(res, 404, { error: "Pedido não encontrado." });
   const allowed = ["pendente", "confirmado", "enviado", "entregue", "cancelado"];
   if (!allowed.includes(req.body.status)) return json(res, 400, { error: "Status inválido." });
+  const wasConfirmed = ["confirmado", "enviado", "entregue"].includes(order.status);
   order.status = req.body.status;
   await store.writeJSON("orders.json", orders);
+
+  // Se o pedido está virando "confirmado" agora (não estava antes), manda o
+  // e-mail de confirmação — cobre o caso de pagamento combinado manualmente
+  // pelo lojista, fora do fluxo automático do Mercado Pago.
+  if (req.body.status === "confirmado" && !wasConfirmed) {
+    await triggerOrderConfirmationEmail(order);
+  }
+
   json(res, 200, order);
 });
 
@@ -779,6 +813,7 @@ router.post("/api/payments/webhook", async (req, res) => {
         order.status = "confirmado";
         order.paymentId = payment.id;
         await store.writeJSON("orders.json", orders);
+        await triggerOrderConfirmationEmail(order);
       }
     }
   } catch (e) {

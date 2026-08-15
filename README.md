@@ -112,7 +112,36 @@ O backend já expõe:
 
 ---
 
-## 5. Hospedando de verdade (deploy)
+## 5. Configurando o e-mail de confirmação de venda (Resend)
+
+Quando um pedido vira "confirmado" — pelo webhook do Mercado Pago ou porque
+você mudou o status manualmente no painel admin — o backend manda um e-mail
+pro cliente com os itens, o total e o endereço de entrega. Isso usa o
+[Resend](https://resend.com).
+
+1. Crie uma conta gratuita em [resend.com](https://resend.com) (o plano
+   grátis cobre bem uma loja pequena/média — 3.000 e-mails/mês).
+2. Em **API Keys**, crie uma chave e cole em `RESEND_API_KEY` no `.env`.
+3. Em **Domains**, adicione e verifique o seu domínio (ex: `reitech.com`) —
+   isso exige adicionar alguns registros DNS onde seu domínio está
+   registrado. **Sem isso, o Resend só deixa enviar e-mail pra você mesmo**
+   (modo sandbox), não pros seus clientes.
+4. Depois do domínio verificado, defina `RESEND_FROM_EMAIL` com um endereço
+   desse domínio, ex: `pedidos@reitech.com`.
+5. Ajuste `STORE_NAME` se quiser mudar o nome que aparece no e-mail (padrão:
+   `REI TECH`).
+
+> Se você ainda não tem um domínio próprio, dá pra registrar um barato em
+> serviços como Registro.br, Namecheap ou Cloudflare — e ele também serve
+> pra hospedar o site (`FRONTEND_URL`) mais pra frente.
+
+Sem `RESEND_API_KEY`/`RESEND_FROM_EMAIL` configurados, o backend simplesmente
+não envia o e-mail (e avisa isso no log) — o resto da loja continua
+funcionando normalmente.
+
+---
+
+## 6. Hospedando de verdade (deploy)
 
 Recomendo o **Render** (tem plano gratuito, é simples):
 
@@ -123,22 +152,22 @@ Recomendo o **Render** (tem plano gratuito, é simples):
    - **Build command:** deixe em branco (não há dependências para instalar)
    - **Start command:** `node server.js`
 5. Em **Environment**, adicione as mesmas variáveis do seu `.env`:
-   `PORT`, `PUBLIC_BASE_URL`, `FRONTEND_URL`, `JWT_SECRET`, `ADMIN_PASSWORD_HASH`, `MP_ACCESS_TOKEN`.
+   `PORT`, `PUBLIC_BASE_URL`, `FRONTEND_URL`, `JWT_SECRET`, `ADMIN_PASSWORD_HASH`, `MP_ACCESS_TOKEN`,
+   `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET`, `GOOGLE_CLIENT_ID`,
+   `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `RESEND_API_KEY`, `RESEND_FROM_EMAIL`, `STORE_NAME`.
    - `PUBLIC_BASE_URL` deve ser a URL que o Render te dá (ex: `https://reitech-backend.onrender.com`)
    - `FRONTEND_URL` deve ser a URL onde seu site (o HTML) vai ficar hospedado.
 6. Clique em **Deploy**.
 
 Alternativas equivalentes: [Railway](https://railway.app) ou [Fly.io](https://fly.io).
 
-> ⚠️ **Importante:** o plano gratuito do Render "dorme" depois de um tempo sem uso e o
-> armazenamento em arquivo (`data/`, `uploads/`) pode ser apagado a cada novo deploy.
-> Para uma loja em produção de verdade, quando o volume de vendas crescer, o próximo
-> passo é migrar esse armazenamento para um banco de dados gerenciado (ex: Postgres no
-> próprio Render) — posso te ajudar a fazer essa migração quando chegar a hora.
+> ⚠️ **Nota:** o plano gratuito do Render "dorme" depois de um tempo sem uso e o disco
+> local (pasta `uploads/`, se ainda usada) é apagado a cada novo deploy — mas produtos,
+> pedidos e clientes já ficam salvos no Supabase, então essa parte não se perde mais.
 
 ---
 
-## 6. Conectando o site (frontend) a esse backend
+## 7. Conectando o site (frontend) a esse backend
 
 No arquivo `index.html` da loja, defina a constante `API_BASE_URL` com a URL
 do backend hospedado (ex: `https://reitech-backend.onrender.com`), e me avise
@@ -147,7 +176,37 @@ chamar essa API em vez do armazenamento local.
 
 ---
 
-## 7. Estrutura das rotas da API
+## 7.5. Configurando o login "Continuar com Google" (opcional)
+
+Sem isso configurado, o botão do Google simplesmente não aparece na tela de
+login — o cadastro/login normal por e-mail e senha continua funcionando
+exatamente igual.
+
+1. Acesse [console.cloud.google.com](https://console.cloud.google.com/) e crie
+   um projeto (ou use um existente).
+2. Vá em **APIs e serviços → Tela de consentimento OAuth** e configure o
+   básico (nome do app, e-mail de suporte, logo se quiser). Pode deixar em
+   modo "Externo" e "Em produção" quando estiver pronto.
+3. Vá em **APIs e serviços → Credenciais → Criar credenciais → ID do cliente
+   OAuth** e escolha o tipo **Aplicativo da Web**.
+4. Em **Origens JavaScript autorizadas**, adicione a URL do seu site (ex:
+   `https://reitech.netlify.app`) e, se for testar localmente, também
+   `http://localhost:5500` (ou a porta que você usa).
+5. Copie o **ID do cliente** gerado (uma string longa terminada em
+   `.apps.googleusercontent.com` — não é segredo, pode ficar exposta no
+   site) e cole em **dois lugares**:
+   - No `.env` do backend, na variável `GOOGLE_CLIENT_ID`.
+   - No `index.html`, na constante `GOOGLE_CLIENT_ID` (perto do topo do
+     `<script>`, junto com `API_BASE_URL`).
+
+Quando um cliente entra com o Google pela primeira vez, uma conta é criada
+automaticamente com o nome e e-mail da conta Google dele (sem senha própria).
+Se esse e-mail já tinha uma conta cadastrada por senha, o login com Google
+passa a funcionar nela também — não cria uma conta duplicada.
+
+---
+
+## 8. Estrutura das rotas da API
 
 | Método | Rota | Acesso | Descrição |
 |---|---|---|---|
@@ -165,6 +224,7 @@ chamar essa API em vez do armazenamento local.
 | GET | `/api/admin/customers` | admin | Lista clientes (derivado dos pedidos) |
 | POST | `/api/customers/signup` | público | Cliente cria uma conta (nome, e-mail, senha, telefone opcional) |
 | POST | `/api/customers/login` | público | Login do cliente, retorna token válido por 30 dias |
+| POST | `/api/customers/google` | público | Login/cadastro do cliente com a conta Google (cria a conta automaticamente na primeira vez) |
 | GET | `/api/customers/me` | cliente | Retorna os dados da conta logada |
 | PUT | `/api/customers/me` | cliente | Atualiza nome/telefone/endereço da conta |
 | GET | `/api/customers/orders` | cliente | Histórico de pedidos da conta logada |
@@ -173,14 +233,17 @@ chamar essa API em vez do armazenamento local.
 
 Rotas marcadas como **admin** exigem o cabeçalho `Authorization: Bearer TOKEN_ADMIN`
 (obtido em `/api/auth/login`). Rotas marcadas como **cliente** exigem
-`Authorization: Bearer TOKEN_CLIENTE` (obtido em `/api/customers/login` ou `/api/customers/signup`)
-— são tokens diferentes, um não funciona no lugar do outro.
+`Authorization: Bearer TOKEN_CLIENTE` (obtido em `/api/customers/login`,
+`/api/customers/signup` ou `/api/customers/google`) — são tokens diferentes,
+um não funciona no lugar do outro.
 
 ---
 
-## 8. Contas de cliente — o que já está implementado
+## 9. Contas de cliente — o que já está implementado
 
 - Cadastro com nome, e-mail e senha (mínimo 8 caracteres). Telefone é opcional no cadastro.
+- Login/cadastro em um clique com **"Continuar com Google"** (veja a seção 6.5
+  para configurar) — cria a conta automaticamente na primeira vez, sem senha.
 - E-mail duplicado é bloqueado (`409 Conflict`).
 - Senha guardada com o mesmo hash seguro (`scrypt`) usado na senha do admin — nunca em texto puro.
 - Token de sessão do cliente dura **30 dias** (o do admin dura 12h) — o cliente
@@ -190,10 +253,12 @@ Rotas marcadas como **admin** exigem o cabeçalho `Authorization: Bearer TOKEN_A
   força bruta em um não trava o outro.
 - Ao finalizar uma compra logado, o pedido fica automaticamente vinculado à
   conta e reaproveita nome/telefone/e-mail/endereço já salvos, sem pedir de novo.
+- Quando o pagamento é aprovado, o cliente recebe um e-mail de confirmação
+  automático com os itens, o total e o endereço de entrega (veja a seção 5).
 
 ---
 
-## 9. Segurança — o que já está implementado
+## 10. Segurança — o que já está implementado
 
 - Senha do admin nunca fica em texto puro: é guardada com hash `scrypt` (nativo do Node).
 - Login gera um token assinado (HMAC-SHA256) que expira em 12 horas.
