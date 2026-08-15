@@ -123,6 +123,14 @@ function publicCustomer(c) {
 const EMPTY_ADDRESS = { cep: "", street: "", number: "", complement: "", neighborhood: "", city: "", state: "" };
 
 function normalizeAddressInput(raw) {
+  // Contas criadas antes dessa atualização guardaram o endereço como um
+  // texto único (ex: "Rua X, 534, Centro"). Em vez de perder essa informação
+  // ou deixar tudo em branco, jogamos o texto inteiro no campo "Rua" — o
+  // cliente só precisa completar CEP/número/bairro/cidade/estado uma vez,
+  // não redigitar tudo do zero.
+  if (typeof raw === "string" && raw.trim()) {
+    return { ...EMPTY_ADDRESS, street: raw.trim() };
+  }
   const a = raw && typeof raw === "object" ? raw : {};
   return {
     cep: String(a.cep || "").replace(/\D/g, "").slice(0, 8),
