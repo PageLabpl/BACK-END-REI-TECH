@@ -721,7 +721,10 @@
     <main class="admin-main">
       <!-- Dashboard -->
       <section class="admin-panel active" id="panel-dashboard">
-        <div class="admin-topbar"><h2>Painel geral</h2></div>
+        <div class="admin-topbar">
+          <h2>Painel geral</h2>
+          <select id="dashboardPeriod" onchange="renderDashboard()" style="width:auto; padding:9px 14px; border-radius:9px; border:1px solid var(--card-border); background:var(--card); color:var(--text);"></select>
+        </div>
         <div class="stat-grid" id="statGrid"></div>
         <div class="section-head" style="margin-bottom:16px;"><div><h2 style="font-size:1.1rem;">Últimos pedidos</h2></div></div>
         <div id="dashboardOrders"></div>
@@ -2087,19 +2090,45 @@ async function moveBanner(id, delta){
 }
 
 /* ---- Dashboard ---- */
+const MONTH_NAMES = ["janeiro","fevereiro","março","abril","maio","junho","julho","agosto","setembro","outubro","novembro","dezembro"];
+function orderMonthKey(iso){
+  const d = new Date(iso);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+function monthKeyLabel(key){
+  const [y, m] = key.split('-').map(Number);
+  return `${MONTH_NAMES[m - 1]} de ${y}`;
+}
+function populateDashboardPeriodOptions(){
+  const sel = document.getElementById('dashboardPeriod');
+  if(!sel) return;
+  const prevValue = sel.value || 'all';
+  const monthKeys = [...new Set(orders.map(o => orderMonthKey(o.date)))].sort().reverse();
+  sel.innerHTML = `<option value="all">Todos os meses</option>` +
+    monthKeys.map(k => `<option value="${k}">${monthKeyLabel(k)}</option>`).join('');
+  sel.value = monthKeys.includes(prevValue) || prevValue === 'all' ? prevValue : 'all';
+}
 function renderDashboard(){
-  const revenue = orders.reduce((s,o)=> s + Number(o.total || 0), 0);
-  const avgTicket = orders.length ? revenue / orders.length : 0;
+  populateDashboardPeriodOptions();
+  const sel = document.getElementById('dashboardPeriod');
+  const selectedMonth = sel ? sel.value : 'all';
+
+  const paidOrders = orders.filter(o => PAID_STATUSES.includes(o.status));
+  const scoped = selectedMonth === 'all' ? paidOrders : paidOrders.filter(o => orderMonthKey(o.date) === selectedMonth);
+
+  const revenue = scoped.reduce((s,o)=> s + Number(o.total || 0), 0);
+  const avgTicket = scoped.length ? revenue / scoped.length : 0;
   const statGrid = document.getElementById('statGrid');
   statGrid.innerHTML = `
-    <div class="stat-card"><span>Faturamento total</span><b>${money(revenue)}</b></div>
-    <div class="stat-card"><span>Pedidos</span><b>${orders.length}</b></div>
+    <div class="stat-card"><span>Faturamento${selectedMonth === 'all' ? ' total' : ' do mês'}</span><b>${money(revenue)}</b></div>
+    <div class="stat-card"><span>Pedidos pagos</span><b>${scoped.length}</b></div>
     <div class="stat-card"><span>Ticket médio</span><b>${money(avgTicket)}</b></div>
     <div class="stat-card"><span>Produtos ativos</span><b>${products.filter(p=>p.active!==false).length}</b></div>
   `;
-  const recent = [...orders].sort((a,b)=> new Date(b.date) - new Date(a.date)).slice(0,5);
+  const recentSource = selectedMonth === 'all' ? orders : orders.filter(o => orderMonthKey(o.date) === selectedMonth);
+  const recent = [...recentSource].sort((a,b)=> new Date(b.date) - new Date(a.date)).slice(0,5);
   const box = document.getElementById('dashboardOrders');
-  if(recent.length === 0){ box.innerHTML = `<div class="empty-admin">Nenhum pedido ainda.</div>`; return; }
+  if(recent.length === 0){ box.innerHTML = `<div class="empty-admin">Nenhum pedido nesse período.</div>`; return; }
   box.innerHTML = `<table><thead><tr><th>Cliente</th><th>Itens</th><th>Total</th><th>Status</th><th>Data</th></tr></thead><tbody>
     ${recent.map(o => `<tr>
       <td>${escapeHtml(o.customer.name)}</td>
