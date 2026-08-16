@@ -765,6 +765,7 @@
         <div class="admin-topbar">
           <h2>Vendas / Pedidos</h2>
           <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+            <button type="button" class="btn btn-solid btn-sm" onclick="openManualSaleForm()">+ Nova venda manual</button>
             <select id="ordersMonthFilter" onchange="renderAdminOrders()" style="width:auto; padding:9px 14px; border-radius:9px; border:1px solid var(--card-border); background:var(--card); color:var(--text);"></select>
             <input type="date" id="ordersFromFilter" onchange="renderAdminOrders()" title="De" style="padding:8px 12px; border-radius:9px; border:1px solid var(--card-border); background:var(--card); color:var(--text);">
             <input type="date" id="ordersToFilter" onchange="renderAdminOrders()" title="Até" style="padding:8px 12px; border-radius:9px; border:1px solid var(--card-border); background:var(--card); color:var(--text);">
@@ -920,6 +921,49 @@
         <select id="bnActive"><option value="true">Ativo (aparece no carrossel)</option><option value="false">Oculto</option></select>
       </div>
       <button type="submit" class="btn btn-solid btn-full">Salvar banner</button>
+    </form>
+  </div>
+</div>
+
+<!-- Manual sale modal (venda registrada por fora do site) -->
+<div class="modal-overlay" id="manualSaleModalOverlay">
+  <div class="modal modal-wide">
+    <div class="modal-head"><h3>Nova venda manual</h3><button class="modal-close" onclick="closeManualSaleForm()">&times;</button></div>
+    <form id="manualSaleForm" onsubmit="submitManualSaleForm(event)">
+      <div class="field-row">
+        <div class="field"><label>Nome do cliente</label><input type="text" id="msName" required></div>
+        <div class="field"><label>Telefone (opcional)</label><input type="tel" id="msPhone"></div>
+      </div>
+      <div class="field"><label>E-mail (opcional)</label><input type="email" id="msEmail"></div>
+
+      <label style="display:block; font-size:0.9rem; margin-bottom:10px;">Itens vendidos</label>
+      <div id="manualSaleItems"></div>
+      <button type="button" class="btn btn-outline" style="margin-bottom:18px" onclick="addManualSaleItemRow()">+ Adicionar item</button>
+
+      <div class="field-row">
+        <div class="field"><label>Forma de pagamento</label>
+          <select id="msPaymentMethod">
+            <option value="dinheiro">Dinheiro</option>
+            <option value="pix">Pix</option>
+            <option value="cartao">Cartão</option>
+            <option value="outro">Outro</option>
+          </select>
+        </div>
+        <div class="field"><label>Status</label>
+          <select id="msStatus">
+            <option value="confirmado" selected>Confirmado</option>
+            <option value="pendente">Pendente</option>
+            <option value="enviado">Enviado</option>
+            <option value="entregue">Entregue</option>
+            <option value="teste">Teste (não conta)</option>
+            <option value="cancelado">Cancelado</option>
+          </select>
+        </div>
+      </div>
+      <div class="field"><label>Observação (opcional)</label><textarea id="msNote" placeholder="Ex: retirou pessoalmente na loja, pagou parcelado, etc."></textarea></div>
+
+      <div style="text-align:right; font-size:1.1rem; margin:10px 0 18px;">Total: <strong id="msTotalPreview">R$ 0,00</strong></div>
+      <button type="submit" class="btn btn-solid btn-full">Registrar venda</button>
     </form>
   </div>
 </div>
@@ -2597,14 +2641,15 @@ function renderAdminOrders(){
   if(orders.length === 0){ box.innerHTML = `<div class="empty-admin">Nenhum pedido registrado ainda.</div>`; return; }
   if(filtered.length === 0){ box.innerHTML = `<div class="empty-admin">Nenhum pedido encontrado nesse período.</div>`; return; }
   const sorted = [...filtered].sort((a,b)=> new Date(b.date) - new Date(a.date));
-  box.innerHTML = `<table><thead><tr><th>Data</th><th>Cliente</th><th>Contato</th><th>Endereço de entrega</th><th>Itens</th><th>Total</th><th>Status</th></tr></thead><tbody>
+  box.innerHTML = `<table><thead><tr><th>Data</th><th>Cliente</th><th>Contato</th><th>Endereço de entrega</th><th>Itens</th><th>Total</th><th>Pagamento</th><th>Status</th></tr></thead><tbody>
     ${sorted.map(o => `<tr>
-      <td>${formatDate(o.date)}</td>
+      <td>${formatDate(o.date)}${o.manual ? '<br><span style="font-size:0.72rem;color:var(--muted)">venda manual</span>' : ''}</td>
       <td>${escapeHtml(o.customer.name)}</td>
       <td>${escapeHtml(o.customer.phone)}</td>
       <td style="max-width:220px">${escapeHtml(o.shippingAddressText || o.customer.addressText || '')}</td>
       <td>${o.items.map(i => `${i.qty}x ${escapeHtml(i.name)}${i.color ? ' (' + escapeHtml(i.color) + ')' : ''}`).join('<br>')}</td>
       <td>${money(o.total)}</td>
+      <td>${paymentMethodLabel(o.paymentMethod)}</td>
       <td>
         <select class="status-select" onchange="updateOrderStatus('${o.id}', this.value)">
           ${['pendente','confirmado','enviado','entregue','cancelado','teste'].map(s => `<option value="${s}" ${o.status===s?'selected':''}>${statusLabel(s)}</option>`).join('')}
@@ -2613,6 +2658,9 @@ function renderAdminOrders(){
     </tr>`).join('')}
   </tbody></table>`;
 }
+function paymentMethodLabel(m){
+  return { mercadopago: "Mercado Pago", dinheiro: "Dinheiro", pix: "Pix", cartao: "Cartão", outro: "Outro" }[m] || "—";
+}
 async function updateOrderStatus(id, status){
   try{
     await api(`/api/admin/orders/${id}/status`, { method: "PUT", body: { status }, auth: true });
@@ -2620,6 +2668,114 @@ async function updateOrderStatus(id, status){
     renderDashboard();
     renderAdminOrders();
     showToast("Status do pedido atualizado.");
+  }catch(err){
+    showToast(err.message);
+  }
+}
+
+/* ---- Manual sale (venda registrada por fora do site) ---- */
+let manualSaleItemsState = [];
+function openManualSaleForm(){
+  document.getElementById('manualSaleForm').reset();
+  manualSaleItemsState = [{ productId: '', qty: 1, unitPrice: '', color: '' }];
+  renderManualSaleItemRows();
+  document.getElementById('manualSaleModalOverlay').classList.add('show');
+}
+function closeManualSaleForm(){
+  document.getElementById('manualSaleModalOverlay').classList.remove('show');
+}
+function addManualSaleItemRow(){
+  manualSaleItemsState.push({ productId: '', qty: 1, unitPrice: '', color: '' });
+  renderManualSaleItemRows();
+}
+function removeManualSaleItemRow(idx){
+  manualSaleItemsState.splice(idx, 1);
+  if(manualSaleItemsState.length === 0) manualSaleItemsState.push({ productId: '', qty: 1, unitPrice: '', color: '' });
+  renderManualSaleItemRows();
+}
+function onManualSaleProductChange(idx, productId){
+  const item = manualSaleItemsState[idx];
+  item.productId = productId;
+  const p = products.find(x => x.id === productId);
+  if(p){
+    const hasPromo = p.promoPrice && Number(p.promoPrice) > 0 && Number(p.promoPrice) < Number(p.price);
+    item.unitPrice = hasPromo ? Number(p.promoPrice) : Number(p.price);
+    item.color = '';
+  }
+  renderManualSaleItemRows();
+}
+function onManualSaleFieldChange(idx, field, value){
+  manualSaleItemsState[idx][field] = value;
+  recalcManualSaleTotal();
+}
+function recalcManualSaleTotal(){
+  const total = manualSaleItemsState.reduce((s, it) => {
+    const price = parseFloat(it.unitPrice) || 0;
+    const qty = parseInt(it.qty, 10) || 0;
+    return s + price * qty;
+  }, 0);
+  const el = document.getElementById('msTotalPreview');
+  if(el) el.textContent = money(total);
+}
+function renderManualSaleItemRows(){
+  const box = document.getElementById('manualSaleItems');
+  if(!box) return;
+  box.innerHTML = manualSaleItemsState.map((item, idx) => {
+    const p = products.find(x => x.id === item.productId);
+    const colors = p ? [...new Set((p.images || []).map(i => i.color).filter(Boolean))] : [];
+    return `
+      <div class="field-row" style="align-items:flex-end; margin-bottom:10px;">
+        <div class="field" style="flex:2; margin-bottom:0;">
+          <label>Produto</label>
+          <select onchange="onManualSaleProductChange(${idx}, this.value)">
+            <option value="">Selecione...</option>
+            ${products.map(pr => `<option value="${pr.id}" ${item.productId === pr.id ? 'selected' : ''}>${escapeHtml(pr.name)} — ${money(pr.price)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="field" style="flex:1; margin-bottom:0;">
+          <label>Qtd.</label>
+          <input type="number" min="1" value="${item.qty}" onchange="onManualSaleFieldChange(${idx}, 'qty', this.value)">
+        </div>
+        <div class="field" style="flex:1; margin-bottom:0;">
+          <label>Preço unit.</label>
+          <input type="number" step="0.01" min="0" value="${item.unitPrice}" onchange="onManualSaleFieldChange(${idx}, 'unitPrice', this.value)">
+        </div>
+        ${colors.length > 0 ? `
+        <div class="field" style="flex:1; margin-bottom:0;">
+          <label>Cor</label>
+          <select onchange="onManualSaleFieldChange(${idx}, 'color', this.value)">
+            <option value="">Sem cor</option>
+            ${colors.map(c => `<option value="${escapeAttr(c)}" ${item.color === c ? 'selected' : ''}>${escapeHtml(c)}</option>`).join('')}
+          </select>
+        </div>` : ''}
+        <button type="button" class="btn btn-danger btn-sm" onclick="removeManualSaleItemRow(${idx})" style="flex-shrink:0">Remover</button>
+      </div>
+    `;
+  }).join('');
+  recalcManualSaleTotal();
+}
+async function submitManualSaleForm(e){
+  e.preventDefault();
+  const validItems = manualSaleItemsState.filter(it => it.productId && parseInt(it.qty, 10) > 0);
+  if(validItems.length === 0){ showToast("Adicione ao menos um item válido."); return; }
+  const body = {
+    customer: {
+      name: document.getElementById('msName').value.trim(),
+      phone: document.getElementById('msPhone').value.trim(),
+      email: document.getElementById('msEmail').value.trim()
+    },
+    items: validItems.map(it => ({ productId: it.productId, qty: parseInt(it.qty, 10), unitPrice: it.unitPrice, color: it.color })),
+    paymentMethod: document.getElementById('msPaymentMethod').value,
+    status: document.getElementById('msStatus').value,
+    note: document.getElementById('msNote').value.trim()
+  };
+  try{
+    await api("/api/admin/orders/manual", { method: "POST", auth: true, body });
+    closeManualSaleForm();
+    await loadOrders();
+    renderDashboard();
+    renderAdminOrders();
+    showToast("Venda registrada com sucesso.");
   }catch(err){
     showToast(err.message);
   }

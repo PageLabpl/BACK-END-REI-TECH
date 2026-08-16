@@ -759,7 +759,8 @@ router.post("/api/orders", async (req, res) => {
     shippingAddressText: addressToString(resolvedShippingAddress),
     items: resolvedItems,
     total,
-    status: "pendente"
+    status: "pendente",
+    paymentMethod: "mercadopago"
   };
   orders.push(order);
   await store.writeJSON("orders.json", orders);
@@ -786,6 +787,78 @@ router.post("/api/orders", async (req, res) => {
 router.get("/api/admin/orders", requireAuth, async (req, res) => {
   const orders = await store.readJSON("orders.json", []);
   json(res, 200, orders);
+});
+
+// Venda lançada manualmente pelo admin — cliente que comprou por fora do
+// site (pessoalmente, WhatsApp, etc). Fica registrada igual a um pedido
+// normal, só que com forma de pagamento livre (dinheiro, Pix, cartão...) em
+// vez de passar pelo Mercado Pago, e sem exigir endereço completo.
+router.post("/api/admin/orders/manual", requireAuth, async (req, res) => {
+  const { customer, items, paymentMethod, status, note } = req.body || {};
+
+  const name = String((customer && customer.name) || "").trim();
+  if (!name) return json(res, 400, { error: "Nome do cliente é obrigatório." });
+  if (!Array.isArray(items) || items.length === 0) {
+    return json(res, 400, { error: "Adicione ao menos um item à venda." });
+  }
+
+  const resolvedAddress = normalizeAddressInput((customer && customer.address) || {});
+
+  const products = await store.readJSON("products.json", DEFAULT_PRODUCTS);
+  let total = 0;
+  const resolvedItems = [];
+  for (const item of items) {
+    const product = products.find((p) => p.id === item.productId);
+    if (!product) continue;
+    const qty = Math.max(1, parseInt(item.qty, 10) || 1);
+    const hasPromo = product.promoPrice && Number(product.promoPrice) < Number(product.price);
+    const catalogPrice = hasPromo ? Number(product.promoPrice) : Number(product.price);
+    // O admin pode registrar um preço diferente do catálogo (ex: negociou
+    // pessoalmente) — se não mandar, usa o preço do catálogo normalmente.
+    const unitPrice = item.unitPrice !== undefined && item.unitPrice !== null && item.unitPrice !== ""
+      ? Number(item.unitPrice)
+      : catalogPrice;
+    total += unitPrice * qty;
+    resolvedItems.push({
+      productId: product.id,
+      name: product.name,
+      price: unitPrice,
+      qty,
+      color: String(item.color || "").trim(),
+      cost: product.cost !== undefined && product.cost !== null ? Number(product.cost) : null
+    });
+  }
+  if (resolvedItems.length === 0) return json(res, 400, { error: "Nenhum item válido na venda." });
+
+  const allowedPaymentMethods = ["dinheiro", "pix", "cartao", "outro"];
+  const resolvedPaymentMethod = allowedPaymentMethods.includes(paymentMethod) ? paymentMethod : "outro";
+  const allowedStatuses = ["pendente", "confirmado", "enviado", "entregue", "cancelado", "teste"];
+  const resolvedStatus = allowedStatuses.includes(status) ? status : "confirmado";
+
+  const orders = await store.readJSON("orders.json", []);
+  const order = {
+    id: "ord_" + crypto.randomBytes(6).toString("hex"),
+    date: new Date().toISOString(),
+    customerId: null,
+    customer: {
+      name,
+      phone: String((customer && customer.phone) || "").trim(),
+      email: String((customer && customer.email) || "").trim(),
+      address: resolvedAddress,
+      addressText: addressToString(resolvedAddress)
+    },
+    shippingAddress: resolvedAddress,
+    shippingAddressText: addressToString(resolvedAddress),
+    items: resolvedItems,
+    total,
+    status: resolvedStatus,
+    paymentMethod: resolvedPaymentMethod,
+    manual: true,
+    note: String(note || "").trim()
+  };
+  orders.push(order);
+  await store.writeJSON("orders.json", orders);
+  json(res, 201, order);
 });
 
 // Consulta pública e enxuta de um pedido específico. Usada pelo site para
