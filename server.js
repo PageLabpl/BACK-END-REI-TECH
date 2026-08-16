@@ -11,6 +11,7 @@ const auth = require("./lib/auth");
 const mercadopago = require("./lib/mercadopago");
 const cloudinary = require("./lib/cloudinary");
 const email = require("./lib/email");
+const melhorenvio = require("./lib/melhorenvio");
 
 const PORT = process.env.PORT || 3001;
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -34,6 +35,10 @@ const CUSTOMER_TOKEN_TTL = 30 * 24 * 60 * 60; // 30 dias — cliente espera cont
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
 const RESEND_FROM_EMAIL = process.env.RESEND_FROM_EMAIL;
 const STORE_NAME = process.env.STORE_NAME || "REI TECH";
+const MELHOR_ENVIO_TOKEN = process.env.MELHOR_ENVIO_TOKEN;
+const MELHOR_ENVIO_SANDBOX = process.env.MELHOR_ENVIO_SANDBOX === "true";
+const MELHOR_ENVIO_FROM_CEP = process.env.MELHOR_ENVIO_FROM_CEP;
+const CONTACT_EMAIL = process.env.RESEND_FROM_EMAIL || "contato@reitech.com";
 
 if (!JWT_SECRET || !ADMIN_PASSWORD_HASH) {
   console.error(
@@ -47,9 +52,15 @@ const UPLOADS_DIR = path.join(__dirname, "uploads");
 if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 
 const DEFAULT_PRODUCTS = [
-  { id: "p1", name: "Fone Bluetooth 5.3 Pro", description: "Cancelamento de ruído ativo, até 30h de bateria e conexão dual.", specs: ["Bluetooth 5.3", "Até 30h de bateria", "Cancelamento de ruído ativo"], image: "", price: 299, promoPrice: null, category: "proprio", badge: "Mais vendido", active: true },
-  { id: "p2", name: "Carregador Turbo 30W", description: "Carga rápida USB-C com proteção contra sobrecarga e superaquecimento.", specs: ["Potência de 30W", "Entrada USB-C"], image: "", price: 79, promoPrice: null, category: "proprio", badge: "", active: true }
+  { id: "p1", name: "Fone Bluetooth 5.3 Pro", description: "Cancelamento de ruído ativo, até 30h de bateria e conexão dual.", specs: ["Bluetooth 5.3", "Até 30h de bateria", "Cancelamento de ruído ativo"], image: "", price: 299, promoPrice: null, category: "proprio", badge: "Mais vendido", active: true, weight: 0.3, width: 16, height: 11, length: 8 },
+  { id: "p2", name: "Carregador Turbo 30W", description: "Carga rápida USB-C com proteção contra sobrecarga e superaquecimento.", specs: ["Potência de 30W", "Entrada USB-C"], image: "", price: 79, promoPrice: null, category: "proprio", badge: "", active: true, weight: 0.2, width: 16, height: 11, length: 4 }
 ];
+
+// Peso/dimensões padrão pra produtos que ainda não tiveram isso preenchido —
+// é o tamanho mínimo de pacote aceito pelos Correios (16x11x2cm). Cotações
+// ficam mais precisas quanto antes o lojista preencher o valor real de cada
+// produto no admin.
+const DEFAULT_PACKAGE = { weight: 0.3, width: 16, height: 11, length: 2 };
 
 // ---- Rate limiting simples para login (evita força bruta) ----
 const loginAttempts = new Map(); // ip -> { count, resetAt }
@@ -216,6 +227,45 @@ function matchShippingRule(rules, address) {
   return null;
 }
 
+// Calcula o frete tentando o Melhor Envio primeiro (cotação real por peso/
+// dimensão/distância com transportadoras de verdade) e caindo pras regras
+// manuais cadastradas no admin se o Melhor Envio não estiver configurado,
+// falhar, ou não atender aquele CEP. Sempre retorna o mesmo formato:
+// { price, label, estimatedDays, source } ou null se nada funcionar.
+async function calculateEffectiveShipping({ address, cartItems }) {
+  if (MELHOR_ENVIO_TOKEN && MELHOR_ENVIO_FROM_CEP) {
+    try {
+      const quotes = await melhorenvio.calculateShipping({
+        token: MELHOR_ENVIO_TOKEN,
+        fromCep: MELHOR_ENVIO_FROM_CEP,
+        toCep: address.cep,
+        items: cartItems,
+        sandbox: MELHOR_ENVIO_SANDBOX,
+        defaultPackage: DEFAULT_PACKAGE,
+        userAgent: `${STORE_NAME} (${CONTACT_EMAIL})`
+      });
+      if (quotes.length > 0) {
+        const cheapest = quotes[0];
+        return {
+          price: cheapest.price,
+          label: cheapest.company ? `${cheapest.company} - ${cheapest.service}` : cheapest.service,
+          estimatedDays: cheapest.estimatedDays,
+          source: "melhorenvio"
+        };
+      }
+      // Melhor Envio respondeu mas nenhuma transportadora atende esse CEP —
+      // cai pras regras manuais abaixo em vez de travar o pedido.
+    } catch (e) {
+      console.error("Melhor Envio falhou, usando regras manuais:", e.message);
+    }
+  }
+
+  const rules = await store.readJSON("shipping_rules.json", []);
+  const match = matchShippingRule(rules, address);
+  if (!match) return null;
+  return { price: Number(match.price), label: match.label || "", estimatedDays: match.estimatedDays || null, source: "manual" };
+}
+
 // Fotos extras de um produto (outros ângulos e/ou variações de cor). Cada
 // entrada é { url, color } — color fica vazio quando é só mais um ângulo,
 // sem ser uma variação de cor específica.
@@ -254,7 +304,11 @@ async function triggerOrderConfirmationEmail(order) {
 const router = new Router();
 
 // ---- Health check ----
-router.get("/api/health", (req, res) => json(res, 200, { ok: true, storage: store.USE_SUPABASE ? "supabase" : "arquivo-local" }));
+router.get("/api/health", (req, res) => json(res, 200, {
+  ok: true,
+  storage: store.USE_SUPABASE ? "supabase" : "arquivo-local",
+  shipping: MELHOR_ENVIO_TOKEN && MELHOR_ENVIO_FROM_CEP ? "melhor-envio+manual" : "manual"
+}));
 
 // ---- Auth ----
 router.post("/api/auth/login", (req, res) => {
@@ -302,7 +356,11 @@ router.post("/api/admin/products", requireAuth, async (req, res) => {
     category: p.category === "dropship" ? "dropship" : "proprio",
     categoryId: p.categoryId ? String(p.categoryId) : null,
     badge: String(p.badge || ""),
-    active: p.active !== false
+    active: p.active !== false,
+    weight: p.weight ? Number(p.weight) : null,
+    width: p.width ? Number(p.width) : null,
+    height: p.height ? Number(p.height) : null,
+    length: p.length ? Number(p.length) : null
   };
   products.push(product);
   await store.writeJSON("products.json", products);
@@ -328,7 +386,11 @@ router.put("/api/admin/products/:id", requireAuth, async (req, res) => {
     category: p.category !== undefined ? (p.category === "dropship" ? "dropship" : "proprio") : products[idx].category,
     categoryId: p.categoryId !== undefined ? (p.categoryId ? String(p.categoryId) : null) : products[idx].categoryId,
     badge: p.badge !== undefined ? String(p.badge) : products[idx].badge,
-    active: p.active !== undefined ? Boolean(p.active) : products[idx].active
+    active: p.active !== undefined ? Boolean(p.active) : products[idx].active,
+    weight: p.weight !== undefined ? (p.weight ? Number(p.weight) : null) : products[idx].weight,
+    width: p.width !== undefined ? (p.width ? Number(p.width) : null) : products[idx].width,
+    height: p.height !== undefined ? (p.height ? Number(p.height) : null) : products[idx].height,
+    length: p.length !== undefined ? (p.length ? Number(p.length) : null) : products[idx].length
   };
   await store.writeJSON("products.json", products);
   json(res, 200, products[idx]);
@@ -489,16 +551,39 @@ router.delete("/api/admin/shipping-rules/:id", requireAuth, async (req, res) => 
 
 // Cotação pública — usada no checkout pra mostrar o valor do frete assim
 // que o cliente termina de digitar o CEP, antes de fechar o pedido.
-router.get("/api/shipping/quote", async (req, res) => {
-  const cep = String(req.query.cep || "").replace(/\D/g, "");
-  const state = String(req.query.state || "").trim().toUpperCase();
-  if (cep.length !== 8) return json(res, 400, { error: "CEP inválido." });
-  const rules = await store.readJSON("shipping_rules.json", []);
-  const match = matchShippingRule(rules, { cep, state });
-  if (!match) {
+// POST porque agora precisamos mandar os itens do carrinho (peso/dimensão
+// vêm do catálogo, resolvidos aqui no servidor) — não cabe mais numa
+// query string GET de forma limpa.
+router.post("/api/shipping/quote", async (req, res) => {
+  const { cep, state, items } = req.body || {};
+  const cleanCep = String(cep || "").replace(/\D/g, "");
+  if (cleanCep.length !== 8) return json(res, 400, { error: "CEP inválido." });
+  if (!Array.isArray(items) || items.length === 0) return json(res, 400, { error: "Carrinho vazio." });
+
+  const products = await store.readJSON("products.json", DEFAULT_PRODUCTS);
+  const cartItems = items
+    .map((i) => {
+      const product = products.find((p) => p.id === i.productId);
+      if (!product) return null;
+      const hasPromo = product.promoPrice && Number(product.promoPrice) < Number(product.price);
+      return {
+        productId: product.id,
+        price: hasPromo ? Number(product.promoPrice) : Number(product.price),
+        qty: Math.max(1, parseInt(i.qty, 10) || 1),
+        weight: product.weight,
+        width: product.width,
+        height: product.height,
+        length: product.length
+      };
+    })
+    .filter(Boolean);
+  if (cartItems.length === 0) return json(res, 400, { error: "Nenhum item válido no carrinho." });
+
+  const quote = await calculateEffectiveShipping({ address: { cep: cleanCep, state: String(state || "").trim().toUpperCase() }, cartItems });
+  if (!quote) {
     return json(res, 404, { error: "Não conseguimos calcular o frete para esse CEP. Fale com a loja pelo WhatsApp." });
   }
-  json(res, 200, { price: match.price, label: match.label, estimatedDays: match.estimatedDays });
+  json(res, 200, quote);
 });
 
 // ---- Banners (carrossel de destaques/promoções na loja) ----
@@ -850,21 +935,12 @@ router.post("/api/orders", async (req, res) => {
   const shippingAddressError = addressValidationError(resolvedShippingAddress);
   if (shippingAddressError) return json(res, 400, { error: "Endereço de entrega: " + shippingAddressError });
 
-  // Frete calculado no servidor a partir das regras cadastradas no admin —
-  // o mesmo princípio do preço dos produtos: nunca confiar em valor vindo
-  // do navegador.
-  const shippingRules = await store.readJSON("shipping_rules.json", []);
-  const shippingRule = matchShippingRule(shippingRules, resolvedShippingAddress);
-  if (!shippingRule) {
-    return json(res, 400, { error: "Não conseguimos calcular o frete para esse CEP. Fale com a loja pelo WhatsApp para fechar o pedido." });
-  }
-  const shippingCost = Number(shippingRule.price);
-
   const products = await store.readJSON("products.json", DEFAULT_PRODUCTS);
   // Recalcula o total no servidor a partir do preço real do produto —
   // nunca confiar no preço enviado pelo navegador.
   let total = 0;
   const resolvedItems = [];
+  const shippingCartItems = []; // só usado pra cotar o frete, não é salvo no pedido
   for (const item of items) {
     const product = products.find((p) => p.id === item.productId);
     if (!product) continue;
@@ -880,8 +956,27 @@ router.post("/api/orders", async (req, res) => {
       color: String(item.color || "").trim(), // cor escolhida pelo cliente, se o produto tiver variação
       cost: product.cost !== undefined && product.cost !== null ? Number(product.cost) : null
     });
+    shippingCartItems.push({
+      productId: product.id,
+      price: unitPrice,
+      qty,
+      weight: product.weight,
+      width: product.width,
+      height: product.height,
+      length: product.length
+    });
   }
   if (resolvedItems.length === 0) return json(res, 400, { error: "Nenhum item válido no pedido." });
+
+  // Frete: tenta o Melhor Envio (cotação real por peso/dimensão/distância)
+  // e cai pras regras manuais se não der — sempre calculado aqui no
+  // servidor, nunca confiando em valor vindo do navegador.
+  const shippingQuote = await calculateEffectiveShipping({ address: resolvedShippingAddress, cartItems: shippingCartItems });
+  if (!shippingQuote) {
+    return json(res, 400, { error: "Não conseguimos calcular o frete para esse CEP. Fale com a loja pelo WhatsApp para fechar o pedido." });
+  }
+  const shippingCost = Number(shippingQuote.price);
+
   const itemsTotal = total;
   total += shippingCost;
 
@@ -900,8 +995,9 @@ router.post("/api/orders", async (req, res) => {
     shippingAddress: resolvedShippingAddress,
     shippingAddressText: addressToString(resolvedShippingAddress),
     shippingCost,
-    shippingLabel: shippingRule.label || "",
-    shippingDays: shippingRule.estimatedDays || null,
+    shippingLabel: shippingQuote.label || "",
+    shippingDays: shippingQuote.estimatedDays || null,
+    shippingSource: shippingQuote.source,
     itemsTotal,
     items: resolvedItems,
     total,

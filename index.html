@@ -248,6 +248,7 @@
   .checkbox-label input[type="checkbox"]{ width:17px; height:17px; accent-color:var(--blue); cursor:pointer; flex-shrink:0; }
   .field-row-cep{ display:grid; grid-template-columns:160px 1fr; gap:14px; align-items:end; }
   .field-row-3{ display:grid; grid-template-columns:1fr 1fr 90px; gap:14px; }
+  .field-row-4{ display:grid; grid-template-columns:1fr 1fr 1fr 1fr; gap:14px; }
   .cep-status{ font-size:0.76rem; margin-top:6px; min-height:16px; }
   .shipping-summary{ border:1px solid var(--card-border); border-radius:10px; padding:14px 16px; margin-bottom:16px; }
   .shipping-summary .row{ display:flex; justify-content:space-between; font-size:0.86rem; color:var(--muted); padding:4px 0; }
@@ -347,6 +348,7 @@
     .field-row{ grid-template-columns:1fr; }
     .field-row-cep{ grid-template-columns:1fr; }
     .field-row-3{ grid-template-columns:1fr; }
+    .field-row-4{ grid-template-columns:1fr 1fr; }
     .admin-shell{ grid-template-columns:1fr; }
     .admin-sidebar{ border-right:none; border-bottom:1px solid var(--line); flex-direction:row; overflow-x:auto; padding:14px; }
     .admin-sidebar .brand{ display:none; }
@@ -899,6 +901,15 @@
       </div>
       <div class="field"><label>Custo do produto (opcional)</label><input type="number" step="0.01" min="0" id="pfCost" placeholder="Quanto você paga pelo produto">
         <p class="field-hint">Usado só pra calcular a margem nos Relatórios. Se não preencher, o produto entra na receita mas não no cálculo de lucro.</p>
+      </div>
+      <div class="field"><label>Peso e dimensões da embalagem</label>
+        <p class="field-hint" style="margin-top:0;margin-bottom:10px">Usado para calcular o frete real (Melhor Envio). Se não preencher, o sistema usa um pacote pequeno padrão — o que deixa a cotação menos precisa pra produtos maiores.</p>
+      </div>
+      <div class="field-row-4">
+        <div class="field"><label>Peso (kg)</label><input type="number" step="0.01" min="0" id="pfWeight" placeholder="0.3"></div>
+        <div class="field"><label>Largura (cm)</label><input type="number" step="1" min="0" id="pfWidth" placeholder="16"></div>
+        <div class="field"><label>Altura (cm)</label><input type="number" step="1" min="0" id="pfHeight" placeholder="11"></div>
+        <div class="field"><label>Comprimento (cm)</label><input type="number" step="1" min="0" id="pfLength" placeholder="2"></div>
       </div>
       <div class="field"><label>Características (uma por linha)</label><textarea id="pfSpecs" placeholder="Ex:&#10;Bateria de 30h&#10;Bluetooth 5.3&#10;Cancelamento de ruído ativo"></textarea></div>
       <div class="field-row">
@@ -1790,7 +1801,10 @@ async function updateShippingQuote(){
     return;
   }
   try{
-    const q = await api(`/api/shipping/quote?cep=${cep}&state=${encodeURIComponent(state)}`);
+    const q = await api(`/api/shipping/quote`, {
+      method: "POST",
+      body: { cep, state, items: cart.map(c => ({ productId: c.productId, qty: c.qty })) }
+    });
     currentShippingQuote = q;
     errEl.style.display = 'none';
     submitBtn.disabled = false;
@@ -2590,16 +2604,20 @@ function renderReports(){
 function renderAdminProducts(){
   const box = document.getElementById('adminProductsTable');
   if(products.length === 0){ box.innerHTML = `<div class="empty-admin">Nenhum produto cadastrado. Clique em "+ Novo produto".</div>`; return; }
-  box.innerHTML = `<table><thead><tr><th></th><th>Produto</th><th>Origem</th><th>Categoria</th><th>Preço</th><th>Status</th><th>Ações</th></tr></thead><tbody>
+  box.innerHTML = `<table><thead><tr><th></th><th>Produto</th><th>Origem</th><th>Categoria</th><th>Preço</th><th>Envio</th><th>Status</th><th>Ações</th></tr></thead><tbody>
     ${products.map(p => {
       const hasPromo = p.promoPrice && Number(p.promoPrice) > 0 && Number(p.promoPrice) < Number(p.price);
       const sectionName = p.categoryId ? (categories.find(c => c.id === p.categoryId)?.name || '—') : '—';
+      const hasShippingData = p.weight && p.width && p.height && p.length;
       return `<tr>
         <td>${p.image ? `<img class="table-thumb" src="${escapeAttr(p.image)}" onerror="this.style.visibility='hidden'">` : `<div class="table-thumb"></div>`}</td>
         <td>${escapeHtml(p.name)}${p.badge ? `<br><span class="promo-badge">${escapeHtml(p.badge)}</span>` : ''}</td>
         <td><span class="cat-badge">${p.category === 'dropship' ? 'Dropshipping' : 'Produto próprio'}</span></td>
         <td>${escapeHtml(sectionName)}</td>
         <td>${money(hasPromo ? p.promoPrice : p.price)} ${hasPromo ? `<br><span class="price-old" style="font-size:0.76rem">${money(p.price)}</span>` : ''}</td>
+        <td>${hasShippingData
+          ? `<span class="field-hint" style="margin:0;color:var(--muted)">${p.weight}kg · ${p.width}×${p.height}×${p.length}cm</span>`
+          : `<span class="status-pill status-pendente" title="Sem peso/dimensão — a cotação de frete usa um pacote padrão genérico para este produto">Pacote padrão</span>`}</td>
         <td>${p.active === false ? '<span class="status-pill status-cancelado">Oculto</span>' : '<span class="status-pill status-entregue">Ativo</span>'}</td>
         <td class="row-actions">
           <button class="btn btn-outline btn-sm" onclick="openProductForm('${p.id}')">Editar</button>
@@ -2632,6 +2650,10 @@ function openProductForm(id){
     document.getElementById('pfPrice').value = p.price;
     document.getElementById('pfPromoPrice').value = p.promoPrice || '';
     document.getElementById('pfCost').value = (p.cost !== null && p.cost !== undefined) ? p.cost : '';
+    document.getElementById('pfWeight').value = p.weight || '';
+    document.getElementById('pfWidth').value = p.width || '';
+    document.getElementById('pfHeight').value = p.height || '';
+    document.getElementById('pfLength').value = p.length || '';
     document.getElementById('pfCategory').value = p.category || 'proprio';
     document.getElementById('pfSection').value = p.categoryId || '';
     document.getElementById('pfBadge').value = p.badge || '';
@@ -2801,7 +2823,11 @@ async function submitProductForm(e){
     category: document.getElementById('pfCategory').value,
     categoryId: document.getElementById('pfSection').value || null,
     badge: document.getElementById('pfBadge').value.trim(),
-    active: document.getElementById('pfActive').value === 'true'
+    active: document.getElementById('pfActive').value === 'true',
+    weight: document.getElementById('pfWeight').value !== '' ? parseFloat(document.getElementById('pfWeight').value) : null,
+    width: document.getElementById('pfWidth').value !== '' ? parseFloat(document.getElementById('pfWidth').value) : null,
+    height: document.getElementById('pfHeight').value !== '' ? parseFloat(document.getElementById('pfHeight').value) : null,
+    length: document.getElementById('pfLength').value !== '' ? parseFloat(document.getElementById('pfLength').value) : null
   };
   try{
     await saveProduct(id, data);

@@ -141,7 +141,45 @@ funcionando normalmente.
 
 ---
 
-## 6. Hospedando de verdade (deploy)
+## 6. Configurando o frete real por transportadora (Melhor Envio)
+
+Além das regras de frete manuais (que você cadastra direto no painel admin,
+na aba **Frete**), o backend pode cotar o frete de verdade — por peso,
+dimensão e distância — usando o [Melhor Envio](https://melhorenvio.com.br),
+que agrega Correios e transportadoras privadas (Jadlog, Azul Cargo etc) numa
+única API.
+
+**Como funciona a prioridade:** o checkout tenta o Melhor Envio primeiro. Se
+ele não estiver configurado, falhar, ou nenhuma transportadora atender aquele
+CEP, o sistema cai automaticamente nas regras manuais — o pedido nunca trava
+por causa disso.
+
+1. Crie uma conta em [melhorenvio.com.br](https://melhorenvio.com.br).
+2. No painel, vá em **Configurações → Tokens de Acesso → Adicionar** e gere
+   um token (esse método é mais simples que o fluxo completo de OAuth, e
+   não expira a cada poucas horas).
+3. Cole o token em `MELHOR_ENVIO_TOKEN` no `.env`.
+4. Defina `MELHOR_ENVIO_FROM_CEP` com o CEP de onde os produtos saem (o seu
+   ou o do seu fornecedor/estoque) — é a partir dele que a distância é
+   calculada.
+5. Enquanto estiver testando, deixe `MELHOR_ENVIO_SANDBOX=true` — isso usa o
+   ambiente de testes do Melhor Envio (cotações fictícias, sem gerar nada
+   real). Mude para `false` quando for para produção.
+
+**Peso e dimensões dos produtos:** no cadastro de cada produto (painel admin
+→ Produtos), preencha peso (kg) e dimensões da embalagem (cm) — é isso que
+a transportadora usa pra calcular o preço real. Produtos sem esses dados
+usam um pacote pequeno padrão (16×11×2cm, 0.3kg), o que deixa a cotação
+menos precisa para itens maiores ou mais pesados. A tabela de produtos no
+admin mostra um aviso "Pacote padrão" nos que ainda faltam preencher.
+
+Sem `MELHOR_ENVIO_TOKEN`/`MELHOR_ENVIO_FROM_CEP` configurados, o site usa só
+as regras manuais — funciona normalmente, só não tem a cotação automática
+por transportadora.
+
+---
+
+## 7. Hospedando de verdade (deploy)
 
 Recomendo o **Render** (tem plano gratuito, é simples):
 
@@ -154,7 +192,8 @@ Recomendo o **Render** (tem plano gratuito, é simples):
 5. Em **Environment**, adicione as mesmas variáveis do seu `.env`:
    `PORT`, `PUBLIC_BASE_URL`, `FRONTEND_URL`, `JWT_SECRET`, `ADMIN_PASSWORD_HASH`, `MP_ACCESS_TOKEN`,
    `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET`, `GOOGLE_CLIENT_ID`,
-   `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `RESEND_API_KEY`, `RESEND_FROM_EMAIL`, `STORE_NAME`.
+   `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `RESEND_API_KEY`, `RESEND_FROM_EMAIL`, `STORE_NAME`,
+   `MELHOR_ENVIO_TOKEN`, `MELHOR_ENVIO_FROM_CEP`, `MELHOR_ENVIO_SANDBOX`.
    - `PUBLIC_BASE_URL` deve ser a URL que o Render te dá (ex: `https://reitech-backend.onrender.com`)
    - `FRONTEND_URL` deve ser a URL onde seu site (o HTML) vai ficar hospedado.
 6. Clique em **Deploy**.
@@ -167,7 +206,7 @@ Alternativas equivalentes: [Railway](https://railway.app) ou [Fly.io](https://fl
 
 ---
 
-## 7. Conectando o site (frontend) a esse backend
+## 8. Conectando o site (frontend) a esse backend
 
 No arquivo `index.html` da loja, defina a constante `API_BASE_URL` com a URL
 do backend hospedado (ex: `https://reitech-backend.onrender.com`), e me avise
@@ -176,7 +215,7 @@ chamar essa API em vez do armazenamento local.
 
 ---
 
-## 7.5. Configurando o login "Continuar com Google" (opcional)
+## 8.5. Configurando o login "Continuar com Google" (opcional)
 
 Sem isso configurado, o botão do Google simplesmente não aparece na tela de
 login — o cadastro/login normal por e-mail e senha continua funcionando
@@ -206,7 +245,7 @@ passa a funcionar nela também — não cria uma conta duplicada.
 
 ---
 
-## 8. Estrutura das rotas da API
+## 9. Estrutura das rotas da API
 
 | Método | Rota | Acesso | Descrição |
 |---|---|---|---|
@@ -230,6 +269,11 @@ passa a funcionar nela também — não cria uma conta duplicada.
 | GET | `/api/customers/orders` | cliente | Histórico de pedidos da conta logada |
 | POST | `/api/payments/create-preference` | público | Gera link de pagamento Mercado Pago |
 | POST | `/api/payments/webhook` | Mercado Pago | Confirma pagamento automaticamente |
+| POST | `/api/shipping/quote` | público | Cota o frete (Melhor Envio, com fallback pras regras manuais) pra um CEP + itens do carrinho |
+| GET | `/api/admin/shipping-rules` | admin | Lista as regras de frete manuais |
+| POST | `/api/admin/shipping-rules` | admin | Cria regra de frete (faixa de CEP, estado ou padrão) |
+| PUT | `/api/admin/shipping-rules/:id` | admin | Edita regra de frete |
+| DELETE | `/api/admin/shipping-rules/:id` | admin | Remove regra de frete |
 
 Rotas marcadas como **admin** exigem o cabeçalho `Authorization: Bearer TOKEN_ADMIN`
 (obtido em `/api/auth/login`). Rotas marcadas como **cliente** exigem
@@ -239,7 +283,7 @@ um não funciona no lugar do outro.
 
 ---
 
-## 9. Contas de cliente — o que já está implementado
+## 10. Contas de cliente — o que já está implementado
 
 - Cadastro com nome, e-mail e senha (mínimo 8 caracteres). Telefone é opcional no cadastro.
 - Login/cadastro em um clique com **"Continuar com Google"** (veja a seção 6.5
@@ -258,7 +302,7 @@ um não funciona no lugar do outro.
 
 ---
 
-## 10. Segurança — o que já está implementado
+## 11. Segurança — o que já está implementado
 
 - Senha do admin nunca fica em texto puro: é guardada com hash `scrypt` (nativo do Node).
 - Login gera um token assinado (HMAC-SHA256) que expira em 12 horas.
