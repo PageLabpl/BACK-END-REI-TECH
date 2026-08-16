@@ -189,6 +189,33 @@ function mergeAddress(bodyAddr, savedAddr) {
   return merged;
 }
 
+// ---- Frete por região ----
+// O lojista cadastra regras no admin — por faixa de CEP (mais específico) ou
+// por estado (UF) — e opcionalmente uma regra "padrão" que serve de last
+// resort. Isso evita ter que integrar API de transportadora pra começar a
+// vender: é o mesmo modelo que qualquer loja pequena usa no início (tabela
+// de preço por região).
+function matchShippingRule(rules, address) {
+  const cep = String((address && address.cep) || "").replace(/\D/g, "");
+  const state = String((address && address.state) || "").trim().toUpperCase();
+
+  // 1) Faixa de CEP — a mais específica primeiro (menor intervalo).
+  const cepMatches = rules
+    .filter((r) => r.type === "cep_range" && cep && r.cepStart && r.cepEnd && cep >= r.cepStart && cep <= r.cepEnd)
+    .sort((a, b) => (a.cepEnd - a.cepStart) - (b.cepEnd - b.cepStart));
+  if (cepMatches.length > 0) return cepMatches[0];
+
+  // 2) Estado (UF)
+  const ufMatch = rules.find((r) => r.type === "uf" && r.uf === state);
+  if (ufMatch) return ufMatch;
+
+  // 3) Regra padrão (se existir)
+  const defaultRule = rules.find((r) => r.type === "default");
+  if (defaultRule) return defaultRule;
+
+  return null;
+}
+
 // Fotos extras de um produto (outros ângulos e/ou variações de cor). Cada
 // entrada é { url, color } — color fica vazio quando é só mais um ângulo,
 // sem ser uma variação de cor específica.
@@ -369,6 +396,109 @@ router.delete("/api/admin/categories/:id", requireAuth, async (req, res) => {
   });
   if (changed) await store.writeJSON("products.json", products);
   json(res, 200, { deleted: true });
+});
+
+// ---- Frete por região ----
+// Regras cadastradas livremente pelo lojista: por faixa de CEP (mais
+// específico) ou por estado (UF), com uma regra "padrão" opcional como
+// último recurso. O checkout consulta /api/shipping/quote pra mostrar o
+// valor antes de fechar o pedido, e /api/orders recalcula de novo no
+// servidor (nunca confia no valor que o navegador mandou).
+router.get("/api/admin/shipping-rules", requireAuth, async (req, res) => {
+  const rules = await store.readJSON("shipping_rules.json", []);
+  json(res, 200, rules);
+});
+
+router.post("/api/admin/shipping-rules", requireAuth, async (req, res) => {
+  const rules = await store.readJSON("shipping_rules.json", []);
+  const b = req.body || {};
+  const type = ["cep_range", "uf", "default"].includes(b.type) ? b.type : null;
+  if (!type) return json(res, 400, { error: "Tipo de regra inválido." });
+  const price = Number(b.price);
+  if (!(price >= 0)) return json(res, 400, { error: "Preço do frete inválido." });
+
+  const rule = {
+    id: "ship_" + crypto.randomBytes(6).toString("hex"),
+    type,
+    label: String(b.label || "").trim(),
+    price,
+    estimatedDays: b.estimatedDays ? Number(b.estimatedDays) : null
+  };
+  if (type === "cep_range") {
+    const cepStart = String(b.cepStart || "").replace(/\D/g, "");
+    const cepEnd = String(b.cepEnd || "").replace(/\D/g, "");
+    if (cepStart.length !== 8 || cepEnd.length !== 8) {
+      return json(res, 400, { error: "Faixa de CEP inválida — use CEPs completos (8 dígitos) de início e fim." });
+    }
+    if (cepStart > cepEnd) return json(res, 400, { error: "O CEP inicial da faixa não pode ser maior que o final." });
+    rule.cepStart = cepStart;
+    rule.cepEnd = cepEnd;
+  } else if (type === "uf") {
+    const uf = String(b.uf || "").trim().toUpperCase();
+    if (!UF_REGEX.test(uf)) return json(res, 400, { error: "Estado (UF) inválido — use a sigla com 2 letras." });
+    rule.uf = uf;
+  } else if (type === "default") {
+    // Só faz sentido existir uma regra padrão — se já existe uma, ela é substituída.
+    const withoutOldDefault = rules.filter((r) => r.type !== "default");
+    withoutOldDefault.push(rule);
+    await store.writeJSON("shipping_rules.json", withoutOldDefault);
+    return json(res, 201, rule);
+  }
+  rules.push(rule);
+  await store.writeJSON("shipping_rules.json", rules);
+  json(res, 201, rule);
+});
+
+router.put("/api/admin/shipping-rules/:id", requireAuth, async (req, res) => {
+  const rules = await store.readJSON("shipping_rules.json", []);
+  const idx = rules.findIndex((r) => r.id === req.params.id);
+  if (idx === -1) return json(res, 404, { error: "Regra de frete não encontrada." });
+  const b = req.body || {};
+  if (b.label !== undefined) rules[idx].label = String(b.label).trim();
+  if (b.price !== undefined) {
+    const price = Number(b.price);
+    if (!(price >= 0)) return json(res, 400, { error: "Preço do frete inválido." });
+    rules[idx].price = price;
+  }
+  if (b.estimatedDays !== undefined) rules[idx].estimatedDays = b.estimatedDays ? Number(b.estimatedDays) : null;
+  if (rules[idx].type === "cep_range" && (b.cepStart !== undefined || b.cepEnd !== undefined)) {
+    const cepStart = String(b.cepStart ?? rules[idx].cepStart).replace(/\D/g, "");
+    const cepEnd = String(b.cepEnd ?? rules[idx].cepEnd).replace(/\D/g, "");
+    if (cepStart.length !== 8 || cepEnd.length !== 8 || cepStart > cepEnd) {
+      return json(res, 400, { error: "Faixa de CEP inválida." });
+    }
+    rules[idx].cepStart = cepStart;
+    rules[idx].cepEnd = cepEnd;
+  }
+  if (rules[idx].type === "uf" && b.uf !== undefined) {
+    const uf = String(b.uf).trim().toUpperCase();
+    if (!UF_REGEX.test(uf)) return json(res, 400, { error: "Estado (UF) inválido." });
+    rules[idx].uf = uf;
+  }
+  await store.writeJSON("shipping_rules.json", rules);
+  json(res, 200, rules[idx]);
+});
+
+router.delete("/api/admin/shipping-rules/:id", requireAuth, async (req, res) => {
+  const rules = await store.readJSON("shipping_rules.json", []);
+  const exists = rules.some((r) => r.id === req.params.id);
+  if (!exists) return json(res, 404, { error: "Regra de frete não encontrada." });
+  await store.writeJSON("shipping_rules.json", rules.filter((r) => r.id !== req.params.id));
+  json(res, 200, { deleted: true });
+});
+
+// Cotação pública — usada no checkout pra mostrar o valor do frete assim
+// que o cliente termina de digitar o CEP, antes de fechar o pedido.
+router.get("/api/shipping/quote", async (req, res) => {
+  const cep = String(req.query.cep || "").replace(/\D/g, "");
+  const state = String(req.query.state || "").trim().toUpperCase();
+  if (cep.length !== 8) return json(res, 400, { error: "CEP inválido." });
+  const rules = await store.readJSON("shipping_rules.json", []);
+  const match = matchShippingRule(rules, { cep, state });
+  if (!match) {
+    return json(res, 404, { error: "Não conseguimos calcular o frete para esse CEP. Fale com a loja pelo WhatsApp." });
+  }
+  json(res, 200, { price: match.price, label: match.label, estimatedDays: match.estimatedDays });
 });
 
 // ---- Banners (carrossel de destaques/promoções na loja) ----
@@ -720,6 +850,16 @@ router.post("/api/orders", async (req, res) => {
   const shippingAddressError = addressValidationError(resolvedShippingAddress);
   if (shippingAddressError) return json(res, 400, { error: "Endereço de entrega: " + shippingAddressError });
 
+  // Frete calculado no servidor a partir das regras cadastradas no admin —
+  // o mesmo princípio do preço dos produtos: nunca confiar em valor vindo
+  // do navegador.
+  const shippingRules = await store.readJSON("shipping_rules.json", []);
+  const shippingRule = matchShippingRule(shippingRules, resolvedShippingAddress);
+  if (!shippingRule) {
+    return json(res, 400, { error: "Não conseguimos calcular o frete para esse CEP. Fale com a loja pelo WhatsApp para fechar o pedido." });
+  }
+  const shippingCost = Number(shippingRule.price);
+
   const products = await store.readJSON("products.json", DEFAULT_PRODUCTS);
   // Recalcula o total no servidor a partir do preço real do produto —
   // nunca confiar no preço enviado pelo navegador.
@@ -742,6 +882,8 @@ router.post("/api/orders", async (req, res) => {
     });
   }
   if (resolvedItems.length === 0) return json(res, 400, { error: "Nenhum item válido no pedido." });
+  const itemsTotal = total;
+  total += shippingCost;
 
   const orders = await store.readJSON("orders.json", []);
   const order = {
@@ -757,6 +899,10 @@ router.post("/api/orders", async (req, res) => {
     },
     shippingAddress: resolvedShippingAddress,
     shippingAddressText: addressToString(resolvedShippingAddress),
+    shippingCost,
+    shippingLabel: shippingRule.label || "",
+    shippingDays: shippingRule.estimatedDays || null,
+    itemsTotal,
     items: resolvedItems,
     total,
     status: "pendente",
