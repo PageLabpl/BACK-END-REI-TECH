@@ -38,6 +38,12 @@ const STORE_NAME = process.env.STORE_NAME || "REI TECH";
 const MELHOR_ENVIO_TOKEN = process.env.MELHOR_ENVIO_TOKEN;
 const MELHOR_ENVIO_SANDBOX = process.env.MELHOR_ENVIO_SANDBOX === "true";
 const MELHOR_ENVIO_FROM_CEP = process.env.MELHOR_ENVIO_FROM_CEP;
+// Teto do valor declarado/segurado no frete — evita que produtos caros
+// fiquem com frete alto só por causa do seguro embutido. Se um produto
+// custar menos que esse teto, o seguro continua sendo o preço real dele.
+const MELHOR_ENVIO_MAX_INSURANCE = process.env.MELHOR_ENVIO_MAX_INSURANCE
+  ? Number(process.env.MELHOR_ENVIO_MAX_INSURANCE)
+  : 100;
 const CONTACT_EMAIL = process.env.RESEND_FROM_EMAIL || "contato@reitech.com";
 
 if (!JWT_SECRET || !ADMIN_PASSWORD_HASH) {
@@ -242,7 +248,8 @@ async function calculateEffectiveShipping({ address, cartItems }) {
         items: cartItems,
         sandbox: MELHOR_ENVIO_SANDBOX,
         defaultPackage: DEFAULT_PACKAGE,
-        userAgent: `${STORE_NAME} (${CONTACT_EMAIL})`
+        userAgent: `${STORE_NAME} (${CONTACT_EMAIL})`,
+        maxInsurance: MELHOR_ENVIO_MAX_INSURANCE
       });
       if (quotes.length > 0) {
         const cheapest = quotes[0];

@@ -166,6 +166,18 @@ por causa disso.
    ambiente de testes do Melhor Envio (cotações fictícias, sem gerar nada
    real). Mude para `false` quando for para produção.
 
+   > ⚠️ **Atenção:** produção e sandbox do Melhor Envio são **contas
+   > separadas**, sem relação entre si. Um token gerado no painel normal
+   > (`melhorenvio.com.br`) só funciona com `MELHOR_ENVIO_SANDBOX=false`. Pra
+   > testar em sandbox de verdade, é preciso criar uma conta separada em
+   > `sandbox.melhorenvio.com.br` e gerar um token lá.
+
+6. Por padrão, o seguro declarado no frete é limitado a `MELHOR_ENVIO_MAX_INSURANCE`
+   (R$100 por item, ajustável no `.env`) em vez do preço cheio do produto —
+   isso evita que itens caros fiquem com frete alto só por causa do seguro
+   embutido. Produtos mais baratos que o teto continuam sendo segurados pelo
+   valor real deles.
+
 **Peso e dimensões dos produtos:** no cadastro de cada produto (painel admin
 → Produtos), preencha peso (kg) e dimensões da embalagem (cm) — é isso que
 a transportadora usa pra calcular o preço real. Produtos sem esses dados
@@ -193,7 +205,7 @@ Recomendo o **Render** (tem plano gratuito, é simples):
    `PORT`, `PUBLIC_BASE_URL`, `FRONTEND_URL`, `JWT_SECRET`, `ADMIN_PASSWORD_HASH`, `MP_ACCESS_TOKEN`,
    `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET`, `GOOGLE_CLIENT_ID`,
    `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `RESEND_API_KEY`, `RESEND_FROM_EMAIL`, `STORE_NAME`,
-   `MELHOR_ENVIO_TOKEN`, `MELHOR_ENVIO_FROM_CEP`, `MELHOR_ENVIO_SANDBOX`.
+   `MELHOR_ENVIO_TOKEN`, `MELHOR_ENVIO_FROM_CEP`, `MELHOR_ENVIO_SANDBOX`, `MELHOR_ENVIO_MAX_INSURANCE`.
    - `PUBLIC_BASE_URL` deve ser a URL que o Render te dá (ex: `https://reitech-backend.onrender.com`)
    - `FRONTEND_URL` deve ser a URL onde seu site (o HTML) vai ficar hospedado.
 6. Clique em **Deploy**.
