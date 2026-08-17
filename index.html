@@ -253,6 +253,12 @@
   .shipping-summary{ border:1px solid var(--card-border); border-radius:10px; padding:14px 16px; margin-bottom:16px; }
   .shipping-summary .row{ display:flex; justify-content:space-between; font-size:0.86rem; color:var(--muted); padding:4px 0; }
   .shipping-summary .row.total{ border-top:1px solid var(--card-border); margin-top:6px; padding-top:10px; font-size:1rem; font-weight:700; color:var(--text); }
+  .shipping-option{ display:flex; align-items:center; gap:10px; padding:9px 8px; border-radius:8px; cursor:pointer; font-size:0.86rem; }
+  .shipping-option:hover{ background:rgba(255,255,255,0.03); }
+  .shipping-option input[type="radio"]{ accent-color:var(--blue); flex-shrink:0; }
+  .shipping-option .opt-label{ flex:1; color:var(--text); }
+  .shipping-option .opt-days{ color:var(--muted); font-size:0.78rem; display:block; }
+  .shipping-option .opt-price{ font-weight:700; color:var(--text); }
   .cep-status.loading{ color:var(--muted); }
   .cep-status.ok{ color:var(--success); }
   .cep-status.error{ color:var(--danger); }
@@ -596,7 +602,7 @@
       </div>
       <div class="shipping-summary" id="shippingSummary" style="display:none">
         <div class="row"><span>Subtotal</span><span id="shippingSummarySubtotal"></span></div>
-        <div class="row"><span id="shippingSummaryLabel">Frete</span><span id="shippingSummaryPrice"></span></div>
+        <div id="shippingOptionsList" style="margin:10px 0;"></div>
         <div class="row total"><span>Total</span><span id="shippingSummaryTotal"></span></div>
       </div>
       <p class="field-hint" id="shippingError" style="display:none;color:var(--danger);margin-bottom:14px"></p>
@@ -1784,7 +1790,8 @@ function toggleShippingAddress(){
 /* ---- Frete: consulta a regra cadastrada no admin assim que CEP+estado
    do endereço de entrega estão preenchidos, e mostra o total já com frete
    antes do cliente confirmar o pedido. ---- */
-let currentShippingQuote = null; // { price, label, estimatedDays } | null
+let currentShippingQuote = null; // opção de frete selecionada no momento: { price, label, company, service, estimatedDays } | null
+let shippingOptionsCache = []; // todas as opções que vieram da última cotação
 async function updateShippingQuote(){
   const same = document.getElementById('ckSameAddress').checked;
   const prefix = same ? 'ck' : 'ckShip';
@@ -1798,29 +1805,46 @@ async function updateShippingQuote(){
     summary.style.display = 'none';
     errEl.style.display = 'none';
     currentShippingQuote = null;
+    shippingOptionsCache = [];
     return;
   }
   try{
-    const q = await api(`/api/shipping/quote`, {
+    const res = await api(`/api/shipping/quote`, {
       method: "POST",
       body: { cep, state, items: cart.map(c => ({ productId: c.productId, qty: c.qty })) }
     });
-    currentShippingQuote = q;
+    shippingOptionsCache = res.options || [];
+    currentShippingQuote = shippingOptionsCache[0] || null;
     errEl.style.display = 'none';
     submitBtn.disabled = false;
-    const subtotal = cartTotal();
-    document.getElementById('shippingSummarySubtotal').textContent = money(subtotal);
-    document.getElementById('shippingSummaryLabel').textContent = 'Frete' + (q.label ? ' — ' + q.label : '') + (q.estimatedDays ? ` (até ${q.estimatedDays} dias)` : '');
-    document.getElementById('shippingSummaryPrice').textContent = money(q.price);
-    document.getElementById('shippingSummaryTotal').textContent = money(subtotal + q.price);
+    renderShippingOptions();
     summary.style.display = 'block';
   }catch(err){
     currentShippingQuote = null;
+    shippingOptionsCache = [];
     summary.style.display = 'none';
     errEl.textContent = err.message;
     errEl.style.display = 'block';
     submitBtn.disabled = true;
   }
+}
+function renderShippingOptions(){
+  const subtotal = cartTotal();
+  document.getElementById('shippingSummarySubtotal').textContent = money(subtotal);
+  const list = document.getElementById('shippingOptionsList');
+  list.innerHTML = shippingOptionsCache.map((opt, i) => `
+    <label class="shipping-option">
+      <input type="radio" name="shippingOption" value="${i}" ${currentShippingQuote === opt ? 'checked' : ''} onchange="selectShippingOption(${i})">
+      <span class="opt-label">${escapeHtml(opt.label || 'Frete')}${opt.estimatedDays ? `<span class="opt-days">até ${opt.estimatedDays} dias úteis</span>` : ''}</span>
+      <span class="opt-price">${money(opt.price)}</span>
+    </label>
+  `).join('');
+  const total = subtotal + (currentShippingQuote ? currentShippingQuote.price : 0);
+  document.getElementById('shippingSummaryTotal').textContent = money(total);
+}
+function selectShippingOption(idx){
+  currentShippingQuote = shippingOptionsCache[idx];
+  renderShippingOptions();
 }
 // Se o cliente estiver logado, pré-preenche o formulário com os dados salvos
 // da conta (padrão "Amazon") — ele ainda pode editar antes de confirmar.
@@ -1858,7 +1882,16 @@ async function submitOrder(e){
   try{
     // O servidor recalcula o preço real de cada item — o total exibido aqui é só uma estimativa.
     // Se o cliente estiver logado, o pedido fica vinculado à conta dele automaticamente.
-    order = await api("/api/orders", { method: "POST", body: { customer, items, shippingAddress }, customerAuth: !!customerToken });
+    order = await api("/api/orders", {
+      method: "POST",
+      body: {
+        customer,
+        items,
+        shippingAddress,
+        shipping: currentShippingQuote ? { company: currentShippingQuote.company || '', service: currentShippingQuote.service || '' } : undefined
+      },
+      customerAuth: !!customerToken
+    });
   }catch(err){
     btn.disabled = false;
     btn.textContent = "Ir para o pagamento";
