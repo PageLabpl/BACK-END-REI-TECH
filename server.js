@@ -212,7 +212,7 @@ function mergeAddress(bodyAddr, savedAddr) {
 // resort. Isso evita ter que integrar API de transportadora pra começar a
 // vender: é o mesmo modelo que qualquer loja pequena usa no início (tabela
 // de preço por região).
-function matchSpecificShippingRule(rules, address) {
+function matchShippingRule(rules, address) {
   const cep = String((address && address.cep) || "").replace(/\D/g, "");
   const state = String((address && address.state) || "").trim().toUpperCase();
 
@@ -226,41 +226,24 @@ function matchSpecificShippingRule(rules, address) {
   const ufMatch = rules.find((r) => r.type === "uf" && r.uf === state);
   if (ufMatch) return ufMatch;
 
+  // 3) Regra padrão (se existir)
+  const defaultRule = rules.find((r) => r.type === "default");
+  if (defaultRule) return defaultRule;
+
   return null;
 }
-function ruleToShippingOption(rule) {
-  return {
-    price: Number(rule.price),
-    label: rule.label || "",
-    company: "",
-    service: rule.label || "",
-    estimatedDays: rule.estimatedDays || null,
-    source: "manual"
-  };
-}
 
-// Ordem de prioridade do frete:
-//   1) Regra ESPECÍFICA cadastrada (por CEP ou por UF) pro endereço do
-//      cliente — se existir, é ela que vale, sem nem consultar o Melhor
-//      Envio. Isso deixa você sobrescrever o frete numa região específica
-//      (ex: entrega própria mais barata na sua cidade).
-//   2) Sem regra específica -> tenta o Melhor Envio (cotação real por
-//      peso/dimensão/distância com transportadoras de verdade).
-//   3) Nem regra específica, nem Melhor Envio disponível/funcionando ->
-//      regra "padrão" cadastrada no admin, se existir (last resort).
-// Sempre retorna uma LISTA de opções (1 só no caso de regra manual, ou
-// várias no caso do Melhor Envio). Lista vazia = nada disponível pro CEP.
-async function calculateEffectiveShipping({ address, cartItems }) {
-  const rules = await store.readJSON("shipping_rules.json", []);
-
-  const specificRule = matchSpecificShippingRule(rules, address);
-  if (specificRule) {
-    return [ruleToShippingOption(specificRule)];
-  }
+// Retorna a lista de opções de frete disponíveis pro cliente escolher:
+// cada transportadora do Melhor Envio aparece com dois preços (seguro
+// reduzido / seguro cheio), mais a regra manual como opção extra sempre
+// que existir uma que bata com o endereço. Se o Melhor Envio não estiver
+// configurado ou falhar, sobra só a(s) opção(ões) manual(is).
+async function getShippingOptions({ address, cartItems }) {
+  const options = [];
 
   if (MELHOR_ENVIO_TOKEN && MELHOR_ENVIO_FROM_CEP) {
     try {
-      const quotes = await melhorenvio.calculateShipping({
+      const quotes = await melhorenvio.calculateShippingOptions({
         token: MELHOR_ENVIO_TOKEN,
         fromCep: MELHOR_ENVIO_FROM_CEP,
         toCep: address.cep,
@@ -268,30 +251,60 @@ async function calculateEffectiveShipping({ address, cartItems }) {
         sandbox: MELHOR_ENVIO_SANDBOX,
         defaultPackage: DEFAULT_PACKAGE,
         userAgent: `${STORE_NAME} (${CONTACT_EMAIL})`,
-        maxInsurance: MELHOR_ENVIO_MAX_INSURANCE
+        reducedInsuranceCap: MELHOR_ENVIO_MAX_INSURANCE
       });
-      if (quotes.length > 0) {
-        // Mantém a ordem que o Melhor Envio devolveu (normalmente do mais
-        // barato pro mais caro) — o cliente escolhe entre elas no checkout.
-        return quotes.map((q) => ({
-          price: Number(q.price),
-          label: q.company ? `${q.company} - ${q.service}` : q.service,
-          company: q.company || "",
-          service: q.service || "",
-          estimatedDays: q.estimatedDays || null,
-          source: "melhorenvio"
-        }));
+      for (const q of quotes) {
+        const label = q.company ? `${q.company} - ${q.service}` : q.service;
+        options.push({
+          price: q.priceReduced,
+          label,
+          estimatedDays: q.estimatedDays,
+          source: "melhorenvio",
+          insurance: "reduzido"
+        });
+        // Só oferece a opção de seguro total quando ela custa de verdade
+        // mais caro — se for igual, não faz sentido mostrar duas vezes.
+        if (q.priceFull > q.priceReduced) {
+          options.push({
+            price: q.priceFull,
+            label,
+            estimatedDays: q.estimatedDays,
+            source: "melhorenvio",
+            insurance: "total"
+          });
+        }
       }
-      // Melhor Envio respondeu mas nenhuma transportadora atende esse CEP —
-      // cai pra regra padrão abaixo em vez de travar o pedido.
     } catch (e) {
-      console.error("Melhor Envio falhou, usando regra padrão:", e.message);
+      console.error("Melhor Envio falhou, usando regras manuais:", e.message);
     }
   }
 
-  const defaultRule = rules.find((r) => r.type === "default");
-  if (!defaultRule) return [];
-  return [ruleToShippingOption(defaultRule)];
+  const rules = await store.readJSON("shipping_rules.json", []);
+  const match = matchShippingRule(rules, address);
+  if (match) {
+    options.push({
+      price: Number(match.price),
+      label: match.label || "",
+      estimatedDays: match.estimatedDays || null,
+      source: "manual",
+      insurance: null
+    });
+  }
+
+  return options.sort((a, b) => a.price - b.price);
+}
+
+// Confere se a opção que o cliente escolheu no checkout realmente existe
+// entre as opções calculadas agora (frescas) — nunca confia no preço que
+// veio do navegador. Casa por label+source+insurance, e usa o PREÇO
+// calculado aqui no servidor, não o que o cliente mandou.
+function matchChosenShippingOption(options, chosen) {
+  if (!chosen) return options[0] || null; // se não escolheu nada, usa a mais barata
+  return (
+    options.find(
+      (o) => o.label === chosen.label && o.source === chosen.source && o.insurance === chosen.insurance
+    ) || options[0] || null
+  );
 }
 
 // Fotos extras de um produto (outros ângulos e/ou variações de cor). Cada
@@ -607,7 +620,7 @@ router.post("/api/shipping/quote", async (req, res) => {
     .filter(Boolean);
   if (cartItems.length === 0) return json(res, 400, { error: "Nenhum item válido no carrinho." });
 
-  const options = await calculateEffectiveShipping({ address: { cep: cleanCep, state: String(state || "").trim().toUpperCase() }, cartItems });
+  const options = await getShippingOptions({ address: { cep: cleanCep, state: String(state || "").trim().toUpperCase() }, cartItems });
   if (options.length === 0) {
     return json(res, 404, { error: "Não conseguimos calcular o frete para esse CEP. Fale com a loja pelo WhatsApp." });
   }
@@ -929,7 +942,7 @@ router.get("/api/customers/orders", requireCustomerAuth, async (req, res) => {
 
 // ---- Pedidos ----
 router.post("/api/orders", async (req, res) => {
-  const { customer, items, shippingAddress } = req.body || {};
+  const { customer, items, shippingAddress, shippingOption } = req.body || {};
 
   // Se o cliente estiver logado, usamos os dados salvos da conta como
   // reserva para qualquer campo que não venha preenchido no corpo da
@@ -996,19 +1009,16 @@ router.post("/api/orders", async (req, res) => {
   }
   if (resolvedItems.length === 0) return json(res, 400, { error: "Nenhum item válido no pedido." });
 
-  // Frete: tenta o Melhor Envio (cotação real por peso/dimensão/distância)
-  // e cai pras regras manuais se não der — sempre RECALCULADO aqui no
-  // servidor, nunca confiando no preço vindo do navegador. O cliente só
-  // escolhe QUAL opção quer (ex: economia vs expressa); o preço de cada
-  // uma vem sempre dessa nova consulta.
-  const shippingOptions = await calculateEffectiveShipping({ address: resolvedShippingAddress, cartItems: shippingCartItems });
+  // Frete: recalcula TODAS as opções disponíveis aqui no servidor (nunca
+  // confia no preço vindo do navegador) e confere se a opção que o cliente
+  // escolheu no checkout realmente existe entre elas — se sim, usa o preço
+  // fresco calculado agora; se não achar (ex: tentativa de manipular o
+  // valor), cai pra opção mais barata disponível.
+  const shippingOptions = await getShippingOptions({ address: resolvedShippingAddress, cartItems: shippingCartItems });
   if (shippingOptions.length === 0) {
     return json(res, 400, { error: "Não conseguimos calcular o frete para esse CEP. Fale com a loja pelo WhatsApp para fechar o pedido." });
   }
-  const chosenShipping = req.body && req.body.shipping;
-  const shippingQuote = (chosenShipping && shippingOptions.find((o) =>
-    o.company === String(chosenShipping.company || "") && o.service === String(chosenShipping.service || "")
-  )) || shippingOptions[0]; // se não veio escolha (ou não bateu mais), usa a primeira opção
+  const shippingQuote = matchChosenShippingOption(shippingOptions, shippingOption);
   const shippingCost = Number(shippingQuote.price);
 
   const itemsTotal = total;
@@ -1032,6 +1042,7 @@ router.post("/api/orders", async (req, res) => {
     shippingLabel: shippingQuote.label || "",
     shippingDays: shippingQuote.estimatedDays || null,
     shippingSource: shippingQuote.source,
+    shippingInsurance: shippingQuote.insurance || null,
     itemsTotal,
     items: resolvedItems,
     total,

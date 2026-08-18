@@ -149,15 +149,18 @@ dimensão e distância — usando o [Melhor Envio](https://melhorenvio.com.br),
 que agrega Correios e transportadoras privadas (Jadlog, Azul Cargo etc) numa
 única API.
 
-**Como funciona a prioridade:** o checkout tenta o Melhor Envio primeiro. Se
-ele não estiver configurado, falhar, ou nenhuma transportadora atender aquele
-CEP, o sistema cai automaticamente nas regras manuais — o pedido nunca trava
-por causa disso.
+**Como funciona a prioridade:** o checkout mostra **todas as transportadoras**
+que o Melhor Envio retornar pra aquele CEP (Correios PAC/SEDEX, Jadlog/Gollog
+etc), mais a regra manual cadastrada no admin (se houver uma que bata com o
+CEP) — o cliente escolhe qual quer. Se o Melhor Envio não estiver configurado
+ou falhar por completo, sobra só a opção manual. Sem nenhuma das duas, o
+pedido é bloqueado com um aviso pro cliente falar com você — nunca sai frete
+grátis por acidente.
 
 1. Crie uma conta em [melhorenvio.com.br](https://melhorenvio.com.br).
-2. No painel, vá em **Configurações → Tokens de Acesso → Adicionar** e gere
-   um token (esse método é mais simples que o fluxo completo de OAuth, e
-   não expira a cada poucas horas).
+2. No painel, vá em **Gerenciar → Tokens → Novo Token** e gere um token
+   (esse método é mais simples que o fluxo completo de OAuth). Se o link não
+   aparecer no menu, acesse direto: `melhorenvio.com.br/painel/gerenciar/tokens`.
 3. Cole o token em `MELHOR_ENVIO_TOKEN` no `.env`.
 4. Defina `MELHOR_ENVIO_FROM_CEP` com o CEP de onde os produtos saem (o seu
    ou o do seu fornecedor/estoque) — é a partir dele que a distância é
@@ -172,11 +175,13 @@ por causa disso.
    > testar em sandbox de verdade, é preciso criar uma conta separada em
    > `sandbox.melhorenvio.com.br` e gerar um token lá.
 
-6. Por padrão, o seguro declarado no frete é limitado a `MELHOR_ENVIO_MAX_INSURANCE`
-   (R$100 por item, ajustável no `.env`) em vez do preço cheio do produto —
-   isso evita que itens caros fiquem com frete alto só por causa do seguro
-   embutido. Produtos mais baratos que o teto continuam sendo segurados pelo
-   valor real deles.
+6. **Seguro escolhido pelo cliente:** para cada transportadora, o checkout
+   oferece duas opções de preço — uma com o seguro declarado limitado a
+   `MELHOR_ENVIO_MAX_INSURANCE` (R$100 por item, ajustável no `.env`, frete
+   mais barato) e outra com o seguro no valor cheio do produto (frete mais
+   caro, cobertura total em caso de extravio/dano). A opção com seguro total
+   só aparece quando o preço dela é realmente diferente da reduzida. O
+   cliente decide qual prefere na hora de fechar o pedido.
 
 **Peso e dimensões dos produtos:** no cadastro de cada produto (painel admin
 → Produtos), preencha peso (kg) e dimensões da embalagem (cm) — é isso que
@@ -281,7 +286,7 @@ passa a funcionar nela também — não cria uma conta duplicada.
 | GET | `/api/customers/orders` | cliente | Histórico de pedidos da conta logada |
 | POST | `/api/payments/create-preference` | público | Gera link de pagamento Mercado Pago |
 | POST | `/api/payments/webhook` | Mercado Pago | Confirma pagamento automaticamente |
-| POST | `/api/shipping/quote` | público | Cota o frete (Melhor Envio, com fallback pras regras manuais) pra um CEP + itens do carrinho |
+| POST | `/api/shipping/quote` | público | Lista as opções de frete disponíveis (todas as transportadoras do Melhor Envio, cada uma com preço reduzido/seguro total, mais a regra manual se houver) pra um CEP + itens do carrinho |
 | GET | `/api/admin/shipping-rules` | admin | Lista as regras de frete manuais |
 | POST | `/api/admin/shipping-rules` | admin | Cria regra de frete (faixa de CEP, estado ou padrão) |
 | PUT | `/api/admin/shipping-rules/:id` | admin | Edita regra de frete |
