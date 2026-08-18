@@ -269,6 +269,12 @@
   .cep-status.ok{ color:var(--success); }
   .cep-status.error{ color:var(--danger); }
   .field-hint{ font-size:0.76rem; color:var(--muted); margin-top:6px; }
+  .search-results{ position:relative; margin-top:6px; border:1px solid var(--card-border); border-radius:9px; background:var(--card); max-height:220px; overflow-y:auto; z-index:5; }
+  .search-results .search-result-item{ padding:9px 12px; cursor:pointer; font-size:0.86rem; border-bottom:1px solid var(--card-border); }
+  .search-results .search-result-item:last-child{ border-bottom:none; }
+  .search-results .search-result-item:hover{ background:rgba(125,211,252,0.08); }
+  .search-results .search-result-item .sr-meta{ font-size:0.74rem; color:var(--muted); margin-top:2px; }
+  .search-results .search-result-empty{ padding:10px 12px; font-size:0.82rem; color:var(--muted); }
   .extra-image-row{ display:flex; gap:12px; align-items:center; margin-bottom:10px; padding:10px; border:1px solid var(--card-border); border-radius:10px; }
   .extra-image-row img{ width:52px; height:52px; border-radius:7px; object-fit:cover; background:#080b14; border:1px solid var(--card-border); flex-shrink:0; }
   .extra-image-row .extra-image-fields{ flex:1; min-width:140px; display:flex; flex-direction:column; gap:6px; }
@@ -796,6 +802,33 @@
           </div>
         </div>
 
+        <div class="card" style="padding:20px; margin-bottom:24px; max-width:680px;">
+          <h3 style="margin:0 0 6px; font-size:1rem;">Lançamento manual</h3>
+          <p class="field-hint" style="margin-top:0; margin-bottom:16px;">
+            Pra ajustes sem nota fiscal: contagem física, perda/quebra, devolução ao fornecedor ou
+            correção de cadastro. Busque o produto pelo nome, código de barras ou SKU.
+          </p>
+          <div class="field">
+            <label>Produto</label>
+            <input type="text" id="manualStockSearch" placeholder="Digite o nome, bipe/digite o código de barras ou SKU..." oninput="handleManualStockSearch(this.value)" autocomplete="off">
+            <div id="manualStockSearchResults" class="search-results" style="display:none"></div>
+            <p class="field-hint" id="manualStockSelected"></p>
+          </div>
+          <div class="field-row">
+            <div class="field"><label>Tipo de lançamento</label>
+              <select id="manualStockType" onchange="updateManualStockTypeUI()">
+                <option value="entrada">Entrada (soma ao estoque)</option>
+                <option value="saida">Saída (perda, quebra, devolução ao fornecedor)</option>
+                <option value="ajuste">Ajuste (define o estoque num valor exato, ex: contagem física)</option>
+              </select>
+            </div>
+            <div class="field"><label id="manualStockQtyLabel">Quantidade</label><input type="number" min="0" step="1" id="manualStockQty"></div>
+          </div>
+          <div class="field" id="manualStockCostField"><label>Custo unitário (opcional)</label><input type="number" min="0" step="0.01" id="manualStockCost" placeholder="Só pra entrada, usado nos Relatórios"></div>
+          <div class="field"><label>Motivo / observação (opcional)</label><input type="text" id="manualStockNote" placeholder="Ex: contagem de fim de mês, produto danificado..."></div>
+          <button type="button" class="btn btn-solid" onclick="submitManualStockEntry()">Lançar no estoque</button>
+        </div>
+
         <div class="section-head" style="margin:28px 0 16px;"><div><h2 style="font-size:1.1rem;">Histórico de entradas</h2></div></div>
         <div id="stockEntriesTable"></div>
       </section>
@@ -952,7 +985,16 @@
         <p class="field-hint">Usado só pra calcular a margem nos Relatórios. Se não preencher, o produto entra na receita mas não no cálculo de lucro.</p>
       </div>
       <div class="field"><label>Estoque (opcional)</label><input type="number" step="1" min="0" id="pfStock" placeholder="Deixe em branco = sem controle de estoque">
-        <p class="field-hint">Preenchendo, o site passa a descontar automaticamente a cada venda e bloqueia o pedido se acabar. Pra ajustar depois, edite aqui ou dê entrada por nota fiscal na aba Estoque. Deixe em branco pra produtos sem limite (ex: dropshipping).</p>
+        <p class="field-hint">Preenchendo, o site passa a descontar automaticamente a cada venda e bloqueia o pedido se acabar. Pra ajustar depois, edite aqui ou dê entrada por nota fiscal ou lançamento manual na aba Estoque. Deixe em branco pra produtos sem limite (ex: dropshipping).</p>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>Código de barras (opcional)</label><input type="text" id="pfBarcode" placeholder="EAN / GTIN">
+          <p class="field-hint">Preenchido automaticamente ao ler a NF-e do fornecedor, se a nota trouxer o código. Usado para localizar o produto rápido na tela de Estoque.</p>
+        </div>
+        <div class="field"><label>Código interno / SKU (opcional)</label><input type="text" id="pfSku" placeholder="Sua referência própria"></div>
+      </div>
+      <div class="field"><label>Estoque mínimo para alerta (opcional)</label><input type="number" step="1" min="0" id="pfMinStock" placeholder="Padrão: 5 unidades">
+        <p class="field-hint">Abaixo desse número o produto aparece com aviso de "estoque baixo" no painel.</p>
       </div>
       <div class="field"><label>Peso e dimensões da embalagem</label>
         <p class="field-hint" style="margin-top:0;margin-bottom:10px">Usado para calcular o frete real (Melhor Envio). Se não preencher, o sistema usa um pacote pequeno padrão — o que deixa a cotação menos precisa pra produtos maiores.</p>
@@ -2272,24 +2314,59 @@ function handleNfeFileSelected(event){
   reader.readAsText(file);
 }
 
+// Tenta casar automaticamente um item da nota a um produto já cadastrado,
+// primeiro pelo código de barras (mais confiável), depois pelo nome (ajuda
+// o admin a já abrir a tela com o mapeamento mais provável pré-selecionado).
+function guessProductForNfeItem(it){
+  if(it.barcode){
+    const byBarcode = products.find(p => p.barcode && p.barcode === it.barcode);
+    if(byBarcode) return byBarcode.id;
+  }
+  const desc = (it.description || '').trim().toLowerCase();
+  if(desc){
+    const byName = products.find(p => p.name.trim().toLowerCase() === desc);
+    if(byName) return byName.id;
+  }
+  return '';
+}
+
 function renderNfeReview(parsed){
   document.getElementById('nfeSupplierInfo').textContent =
     `${parsed.supplierName || 'Fornecedor não identificado'}${parsed.number ? ' · Nota nº ' + parsed.number : ''}${parsed.chave ? ' · Chave ' + parsed.chave : ''}`;
 
-  const productOptions = products.map(p => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('');
+  const productOptions = products.map(p => `<option value="${p.id}">${escapeHtml(p.name)}${p.barcode ? ' — ' + escapeHtml(p.barcode) : ''}</option>`).join('');
 
   document.getElementById('nfeItemsTable').innerHTML = `<table><thead><tr>
       <th>Item da nota</th><th>Qtd. na nota</th><th>Produto no seu catálogo</th><th>Qtd. a somar</th>
     </tr></thead><tbody>
-    ${parsed.items.map((it, idx) => `<tr>
-      <td>${escapeHtml(it.description)}<br><span class="field-hint" style="margin:0">Cód. fornecedor: ${escapeHtml(it.code || '—')}</span></td>
+    ${parsed.items.map((it, idx) => {
+      const guess = guessProductForNfeItem(it);
+      return `<tr>
+      <td>${escapeHtml(it.description)}<br><span class="field-hint" style="margin:0">Cód. fornecedor: ${escapeHtml(it.code || '—')}${it.barcode ? ' · Cód. barras: ' + escapeHtml(it.barcode) : ''}</span></td>
       <td>${it.qty}</td>
-      <td><select id="nfeMap${idx}"><option value="">— Ignorar este item —</option>${productOptions}</select></td>
+      <td>
+        <select id="nfeMap${idx}" onchange="toggleNfeNewProductRow(${idx})">
+          <option value="">— Ignorar este item —</option>
+          <option value="__new__">+ Cadastrar novo produto</option>
+          ${products.map(p => `<option value="${p.id}"${p.id === guess ? ' selected' : ''}>${escapeHtml(p.name)}${p.barcode ? ' — ' + escapeHtml(p.barcode) : ''}</option>`).join('')}
+        </select>
+        <div id="nfeNewProduct${idx}" style="display:none; margin-top:10px; padding:10px; border:1px solid var(--card-border); border-radius:9px;">
+          <div class="field" style="margin-bottom:8px;"><label style="font-size:0.76rem;">Nome do produto</label><input type="text" id="nfeNewName${idx}" value="${escapeAttr(it.description || '')}"></div>
+          <div class="field" style="margin-bottom:8px;"><label style="font-size:0.76rem;">Preço de venda (R$)</label><input type="number" min="0" step="0.01" id="nfeNewPrice${idx}" placeholder="0.00"></div>
+          <div class="field" style="margin-bottom:0;"><label style="font-size:0.76rem;">Código de barras</label><input type="text" id="nfeNewBarcode${idx}" value="${escapeAttr(it.barcode || '')}"></div>
+        </div>
+      </td>
       <td><input type="number" min="0" step="1" id="nfeQty${idx}" value="${Math.round(it.qty)}" style="width:80px"></td>
-    </tr>`).join('')}
+    </tr>`;
+    }).join('')}
     </tbody></table>`;
 
   document.getElementById('nfeReviewCard').style.display = 'block';
+}
+
+function toggleNfeNewProductRow(idx){
+  const isNew = document.getElementById('nfeMap' + idx).value === '__new__';
+  document.getElementById('nfeNewProduct' + idx).style.display = isNew ? 'block' : 'none';
 }
 
 function cancelNfeReview(){
@@ -2303,10 +2380,25 @@ async function confirmStockEntry(){
   if(!nfeParsedData) return;
   const items = nfeParsedData.items
     .map((it, idx) => {
-      const productId = document.getElementById('nfeMap' + idx).value;
+      const mapped = document.getElementById('nfeMap' + idx).value;
       const qty = parseInt(document.getElementById('nfeQty' + idx).value, 10);
-      if(!productId || !qty || qty <= 0) return null;
-      return { productId, qty, unitCost: it.unitPrice || null };
+      if(!mapped || !qty || qty <= 0) return null;
+      if(mapped === '__new__'){
+        const name = document.getElementById('nfeNewName' + idx).value.trim();
+        if(!name) return null;
+        return {
+          type: 'entrada',
+          qty,
+          unitCost: it.unitPrice || null,
+          newProduct: {
+            name,
+            price: document.getElementById('nfeNewPrice' + idx).value || 0,
+            barcode: document.getElementById('nfeNewBarcode' + idx).value.trim(),
+            sku: it.code || ''
+          }
+        };
+      }
+      return { productId: mapped, type: 'entrada', qty, unitCost: it.unitPrice || null };
     })
     .filter(Boolean);
 
@@ -2335,16 +2427,111 @@ async function confirmStockEntry(){
   }
 }
 
+/* ---- Estoque: lançamento manual (sem nota) ---- */
+let manualStockSelectedProduct = null;
+
+function handleManualStockSearch(term){
+  manualStockSelectedProduct = null;
+  document.getElementById('manualStockSelected').textContent = '';
+  const box = document.getElementById('manualStockSearchResults');
+  const q = term.trim().toLowerCase();
+  if(!q){ box.style.display = 'none'; box.innerHTML = ''; return; }
+
+  // Bipar/digitar um código de barras exato já seleciona direto, sem
+  // precisar clicar no resultado — mais rápido pra quem usa leitor.
+  const exactCode = products.find(p => (p.barcode && p.barcode === term.trim()) || (p.sku && p.sku === term.trim()));
+  if(exactCode){
+    selectManualStockProduct(exactCode.id);
+    return;
+  }
+
+  const matches = products.filter(p =>
+    p.name.toLowerCase().includes(q) ||
+    (p.barcode && p.barcode.toLowerCase().includes(q)) ||
+    (p.sku && p.sku.toLowerCase().includes(q))
+  ).slice(0, 8);
+
+  if(matches.length === 0){
+    box.innerHTML = `<div class="search-result-empty">Nenhum produto encontrado.</div>`;
+    box.style.display = 'block';
+    return;
+  }
+  box.innerHTML = matches.map(p => `
+    <div class="search-result-item" onclick="selectManualStockProduct('${p.id}')">
+      ${escapeHtml(p.name)}
+      <div class="sr-meta">${p.barcode ? 'Cód. barras: ' + escapeHtml(p.barcode) + ' · ' : ''}${p.sku ? 'SKU: ' + escapeHtml(p.sku) + ' · ' : ''}Estoque atual: ${(p.stock === null || p.stock === undefined) ? 'sem controle' : p.stock}</div>
+    </div>`).join('');
+  box.style.display = 'block';
+}
+
+function selectManualStockProduct(id){
+  const p = products.find(x => x.id === id);
+  if(!p) return;
+  manualStockSelectedProduct = p;
+  document.getElementById('manualStockSearch').value = p.name;
+  document.getElementById('manualStockSearchResults').style.display = 'none';
+  document.getElementById('manualStockSelected').textContent =
+    `Selecionado: ${p.name} · estoque atual: ${(p.stock === null || p.stock === undefined) ? 'sem controle (será ativado ao lançar)' : p.stock + ' un.'}`;
+}
+
+function updateManualStockTypeUI(){
+  const type = document.getElementById('manualStockType').value;
+  document.getElementById('manualStockQtyLabel').textContent = type === 'ajuste' ? 'Novo estoque (valor exato)' : 'Quantidade';
+  document.getElementById('manualStockCostField').style.display = type === 'entrada' ? 'block' : 'none';
+}
+
+async function submitManualStockEntry(){
+  if(!manualStockSelectedProduct){ showToast("Busque e selecione um produto primeiro."); return; }
+  const type = document.getElementById('manualStockType').value;
+  const qtyRaw = document.getElementById('manualStockQty').value;
+  const qty = parseInt(qtyRaw, 10);
+  if(qtyRaw === '' || isNaN(qty) || qty < 0){ showToast("Informe uma quantidade válida."); return; }
+
+  const cost = document.getElementById('manualStockCost').value;
+  const note = document.getElementById('manualStockNote').value.trim();
+
+  try{
+    const result = await api("/api/admin/stock-entries", {
+      method: "POST",
+      auth: true,
+      body: {
+        source: "manual",
+        note,
+        items: [{
+          productId: manualStockSelectedProduct.id,
+          type,
+          qty,
+          unitCost: type === 'entrada' && cost !== '' ? cost : null
+        }]
+      }
+    });
+    showToast(result && result.stockWarning ? result.stockWarning : "Estoque atualizado com sucesso.");
+    document.getElementById('manualStockSearch').value = '';
+    document.getElementById('manualStockSelected').textContent = '';
+    document.getElementById('manualStockQty').value = '';
+    document.getElementById('manualStockCost').value = '';
+    document.getElementById('manualStockNote').value = '';
+    manualStockSelectedProduct = null;
+    await loadProducts();
+    await loadStockEntries();
+    renderAdminProducts();
+    renderStockEntries();
+  }catch(err){
+    showToast(err.message);
+  }
+}
+
 function renderStockEntries(){
   const box = document.getElementById('stockEntriesTable');
   if(!box) return;
   if(stockEntries.length === 0){ box.innerHTML = `<div class="empty-admin">Nenhuma entrada de estoque registrada ainda.</div>`; return; }
+  const typeLabel = { entrada: '+', saida: '−', ajuste: '=' };
   box.innerHTML = `<table><thead><tr><th>Data</th><th>Origem</th><th>Nota</th><th>Itens</th></tr></thead><tbody>
     ${stockEntries.map(e => `<tr>
       <td>${formatDate(e.date)}</td>
-      <td>${e.supplierName ? escapeHtml(e.supplierName) : (e.source === 'manual' ? 'Entrada manual' : 'NF-e')}</td>
+      <td>${e.supplierName ? escapeHtml(e.supplierName) : (e.source === 'manual' ? 'Lançamento manual' : 'NF-e')}${e.note ? `<br><span class="field-hint" style="margin:0">${escapeHtml(e.note)}</span>` : ''}</td>
       <td>${e.nfeNumber ? 'Nº ' + escapeHtml(e.nfeNumber) : '—'}</td>
-      <td>${e.items.map(i => `+${i.qty} ${escapeHtml(i.name)}`).join('<br>')}</td>
+      <td>${e.items.map(i => `${typeLabel[i.type] || '+'}${i.qty} ${escapeHtml(i.name)}<span class="field-hint" style="margin:0"> (${i.before ?? '—'} → ${i.after ?? '—'})</span>`).join('<br>')}</td>
     </tr>`).join('')}
     </tbody></table>`;
 }
@@ -2860,16 +3047,20 @@ function renderAdminProducts(){
       const hasPromo = p.promoPrice && Number(p.promoPrice) > 0 && Number(p.promoPrice) < Number(p.price);
       const sectionName = p.categoryId ? (categories.find(c => c.id === p.categoryId)?.name || '—') : '—';
       const hasShippingData = p.weight && p.width && p.height && p.length;
+      const minStockThreshold = (p.minStock !== null && p.minStock !== undefined) ? p.minStock : 5;
       const stockCell = (p.stock === null || p.stock === undefined)
         ? '<span class="field-hint" style="margin:0;color:var(--muted)">Sem controle</span>'
         : p.stock <= 0
           ? '<span class="status-pill status-cancelado">Esgotado</span>'
-          : p.stock <= 5
+          : p.stock <= minStockThreshold
             ? `<span class="status-pill status-pendente">${p.stock} un.</span>`
             : `<span class="status-pill status-entregue">${p.stock} un.</span>`;
+      const codeLine = (p.barcode || p.sku)
+        ? `<br><span class="field-hint" style="margin:0">${p.barcode ? 'Cód. barras: ' + escapeHtml(p.barcode) : ''}${p.barcode && p.sku ? ' · ' : ''}${p.sku ? 'SKU: ' + escapeHtml(p.sku) : ''}</span>`
+        : '';
       return `<tr>
         <td>${p.image ? `<img class="table-thumb" src="${escapeAttr(p.image)}" onerror="this.style.visibility='hidden'">` : `<div class="table-thumb"></div>`}</td>
-        <td>${escapeHtml(p.name)}${p.badge ? `<br><span class="promo-badge">${escapeHtml(p.badge)}</span>` : ''}</td>
+        <td>${escapeHtml(p.name)}${p.badge ? `<br><span class="promo-badge">${escapeHtml(p.badge)}</span>` : ''}${codeLine}</td>
         <td><span class="cat-badge">${p.category === 'dropship' ? 'Dropshipping' : 'Produto próprio'}</span></td>
         <td>${escapeHtml(sectionName)}</td>
         <td>${money(hasPromo ? p.promoPrice : p.price)} ${hasPromo ? `<br><span class="price-old" style="font-size:0.76rem">${money(p.price)}</span>` : ''}</td>
@@ -2910,6 +3101,9 @@ function openProductForm(id){
     document.getElementById('pfPromoPrice').value = p.promoPrice || '';
     document.getElementById('pfCost').value = (p.cost !== null && p.cost !== undefined) ? p.cost : '';
     document.getElementById('pfStock').value = (p.stock !== null && p.stock !== undefined) ? p.stock : '';
+    document.getElementById('pfBarcode').value = p.barcode || '';
+    document.getElementById('pfSku').value = p.sku || '';
+    document.getElementById('pfMinStock').value = (p.minStock !== null && p.minStock !== undefined) ? p.minStock : '';
     document.getElementById('pfWeight').value = p.weight || '';
     document.getElementById('pfWidth').value = p.width || '';
     document.getElementById('pfHeight').value = p.height || '';
@@ -3080,6 +3274,9 @@ async function submitProductForm(e){
     price: parseFloat(document.getElementById('pfPrice').value),
     cost: document.getElementById('pfCost').value !== '' ? parseFloat(document.getElementById('pfCost').value) : null,
     stock: document.getElementById('pfStock').value !== '' ? parseInt(document.getElementById('pfStock').value, 10) : null,
+    barcode: document.getElementById('pfBarcode').value.trim(),
+    sku: document.getElementById('pfSku').value.trim(),
+    minStock: document.getElementById('pfMinStock').value !== '' ? parseInt(document.getElementById('pfMinStock').value, 10) : null,
     promoPrice: promo ? parseFloat(promo) : null,
     category: document.getElementById('pfCategory').value,
     categoryId: document.getElementById('pfSection').value || null,
