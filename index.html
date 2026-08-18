@@ -732,6 +732,7 @@
       <nav class="admin-nav">
         <button data-panel="dashboard" class="active" onclick="switchAdminPanel('dashboard')">Painel geral</button>
         <button data-panel="produtos" onclick="switchAdminPanel('produtos')">Produtos</button>
+        <button data-panel="estoque" onclick="switchAdminPanel('estoque')">Estoque</button>
         <button data-panel="categorias" onclick="switchAdminPanel('categorias')">Categorias</button>
         <button data-panel="banners" onclick="switchAdminPanel('banners')">Banners</button>
         <button data-panel="frete" onclick="switchAdminPanel('frete')">Frete</button>
@@ -762,6 +763,41 @@
           <button class="btn btn-solid" onclick="openProductForm()">+ Novo produto</button>
         </div>
         <div id="adminProductsTable"></div>
+      </section>
+
+      <!-- Estoque -->
+      <section class="admin-panel" id="panel-estoque">
+        <div class="admin-topbar">
+          <h2>Estoque</h2>
+        </div>
+        <p class="field-hint" style="margin-bottom:18px; max-width:680px;">
+          Dê entrada no estoque importando o XML da nota fiscal (NF-e) que o fornecedor te mandou —
+          o site lê os itens automaticamente, você só precisa dizer qual produto do seu catálogo
+          cada um corresponde. Produtos com estoque preenchido passam a descontar sozinhos a cada
+          venda e bloqueiam o pedido se acabar.
+        </p>
+
+        <div class="card" style="padding:20px; margin-bottom:24px; max-width:680px;">
+          <h3 style="margin:0 0 14px; font-size:1rem;">Importar nota fiscal (XML)</h3>
+          <div class="field">
+            <label>Arquivo XML da NF-e</label>
+            <input type="file" id="nfeFileInput" accept=".xml,text/xml" onchange="handleNfeFileSelected(event)">
+          </div>
+          <p class="field-hint" id="nfeParseStatus"></p>
+        </div>
+
+        <div id="nfeReviewCard" style="display:none" class="card">
+          <h3 style="margin:0 0 6px; font-size:1rem;">Conferir itens da nota</h3>
+          <p class="field-hint" id="nfeSupplierInfo" style="margin-bottom:16px;"></p>
+          <div id="nfeItemsTable"></div>
+          <div style="display:flex; gap:10px; margin-top:18px;">
+            <button class="btn btn-solid" onclick="confirmStockEntry()">Confirmar entrada no estoque</button>
+            <button class="btn btn-outline" onclick="cancelNfeReview()">Cancelar</button>
+          </div>
+        </div>
+
+        <div class="section-head" style="margin:28px 0 16px;"><div><h2 style="font-size:1.1rem;">Histórico de entradas</h2></div></div>
+        <div id="stockEntriesTable"></div>
       </section>
 
       <!-- Categorias -->
@@ -914,6 +950,9 @@
       </div>
       <div class="field"><label>Custo do produto (opcional)</label><input type="number" step="0.01" min="0" id="pfCost" placeholder="Quanto você paga pelo produto">
         <p class="field-hint">Usado só pra calcular a margem nos Relatórios. Se não preencher, o produto entra na receita mas não no cálculo de lucro.</p>
+      </div>
+      <div class="field"><label>Estoque (opcional)</label><input type="number" step="1" min="0" id="pfStock" placeholder="Deixe em branco = sem controle de estoque">
+        <p class="field-hint">Preenchendo, o site passa a descontar automaticamente a cada venda e bloqueia o pedido se acabar. Pra ajustar depois, edite aqui ou dê entrada por nota fiscal na aba Estoque. Deixe em branco pra produtos sem limite (ex: dropshipping).</p>
       </div>
       <div class="field"><label>Peso e dimensões da embalagem</label>
         <p class="field-hint" style="margin-top:0;margin-bottom:10px">Usado para calcular o frete real (Melhor Envio). Se não preencher, o sistema usa um pacote pequeno padrão — o que deixa a cotação menos precisa pra produtos maiores.</p>
@@ -2187,6 +2226,7 @@ async function renderAllAdminPanels(){
   await loadAdminBanners();
   await loadExpenses();
   await loadShippingRules();
+  await loadStockEntries();
   renderDashboard();
   renderAdminProducts();
   renderAdminOrders();
@@ -2196,6 +2236,117 @@ async function renderAllAdminPanels(){
   renderAdminExpenses();
   renderAdminShippingRules();
   renderReports();
+  renderStockEntries();
+}
+
+/* ---- Estoque: entrada por nota fiscal (NF-e) ---- */
+let stockEntries = [];
+let nfeParsedData = null; // resultado bruto do parse-nfe, guardado até o admin confirmar
+
+async function loadStockEntries(){
+  try{
+    stockEntries = await api("/api/admin/stock-entries", { auth: true });
+  }catch(err){
+    stockEntries = [];
+  }
+}
+
+function handleNfeFileSelected(event){
+  const file = event.target.files[0];
+  const statusEl = document.getElementById('nfeParseStatus');
+  if(!file) return;
+  statusEl.textContent = "Lendo arquivo...";
+  const reader = new FileReader();
+  reader.onload = async () => {
+    try{
+      const parsed = await api("/api/admin/stock-entries/parse-nfe", { method: "POST", body: { xml: reader.result }, auth: true });
+      nfeParsedData = parsed;
+      statusEl.textContent = `${parsed.items.length} item(ns) encontrado(s) na nota.`;
+      renderNfeReview(parsed);
+    }catch(err){
+      statusEl.textContent = "";
+      showToast(err.message);
+    }
+  };
+  reader.onerror = () => { statusEl.textContent = ""; showToast("Não foi possível ler o arquivo."); };
+  reader.readAsText(file);
+}
+
+function renderNfeReview(parsed){
+  document.getElementById('nfeSupplierInfo').textContent =
+    `${parsed.supplierName || 'Fornecedor não identificado'}${parsed.number ? ' · Nota nº ' + parsed.number : ''}${parsed.chave ? ' · Chave ' + parsed.chave : ''}`;
+
+  const productOptions = products.map(p => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('');
+
+  document.getElementById('nfeItemsTable').innerHTML = `<table><thead><tr>
+      <th>Item da nota</th><th>Qtd. na nota</th><th>Produto no seu catálogo</th><th>Qtd. a somar</th>
+    </tr></thead><tbody>
+    ${parsed.items.map((it, idx) => `<tr>
+      <td>${escapeHtml(it.description)}<br><span class="field-hint" style="margin:0">Cód. fornecedor: ${escapeHtml(it.code || '—')}</span></td>
+      <td>${it.qty}</td>
+      <td><select id="nfeMap${idx}"><option value="">— Ignorar este item —</option>${productOptions}</select></td>
+      <td><input type="number" min="0" step="1" id="nfeQty${idx}" value="${Math.round(it.qty)}" style="width:80px"></td>
+    </tr>`).join('')}
+    </tbody></table>`;
+
+  document.getElementById('nfeReviewCard').style.display = 'block';
+}
+
+function cancelNfeReview(){
+  nfeParsedData = null;
+  document.getElementById('nfeReviewCard').style.display = 'none';
+  document.getElementById('nfeFileInput').value = '';
+  document.getElementById('nfeParseStatus').textContent = '';
+}
+
+async function confirmStockEntry(){
+  if(!nfeParsedData) return;
+  const items = nfeParsedData.items
+    .map((it, idx) => {
+      const productId = document.getElementById('nfeMap' + idx).value;
+      const qty = parseInt(document.getElementById('nfeQty' + idx).value, 10);
+      if(!productId || !qty || qty <= 0) return null;
+      return { productId, qty, unitCost: it.unitPrice || null };
+    })
+    .filter(Boolean);
+
+  if(items.length === 0){ showToast("Selecione ao menos um item com produto e quantidade válidos."); return; }
+
+  try{
+    await api("/api/admin/stock-entries", {
+      method: "POST",
+      auth: true,
+      body: {
+        source: "nfe",
+        nfeKey: nfeParsedData.chave,
+        nfeNumber: nfeParsedData.number,
+        supplierName: nfeParsedData.supplierName,
+        items
+      }
+    });
+    showToast("Estoque atualizado com sucesso.");
+    cancelNfeReview();
+    await loadProducts();
+    await loadStockEntries();
+    renderAdminProducts();
+    renderStockEntries();
+  }catch(err){
+    showToast(err.message);
+  }
+}
+
+function renderStockEntries(){
+  const box = document.getElementById('stockEntriesTable');
+  if(!box) return;
+  if(stockEntries.length === 0){ box.innerHTML = `<div class="empty-admin">Nenhuma entrada de estoque registrada ainda.</div>`; return; }
+  box.innerHTML = `<table><thead><tr><th>Data</th><th>Origem</th><th>Nota</th><th>Itens</th></tr></thead><tbody>
+    ${stockEntries.map(e => `<tr>
+      <td>${formatDate(e.date)}</td>
+      <td>${e.supplierName ? escapeHtml(e.supplierName) : (e.source === 'manual' ? 'Entrada manual' : 'NF-e')}</td>
+      <td>${e.nfeNumber ? 'Nº ' + escapeHtml(e.nfeNumber) : '—'}</td>
+      <td>${e.items.map(i => `+${i.qty} ${escapeHtml(i.name)}`).join('<br>')}</td>
+    </tr>`).join('')}
+    </tbody></table>`;
 }
 
 /* ---- Categories admin ---- */
@@ -2704,17 +2855,25 @@ function renderReports(){
 function renderAdminProducts(){
   const box = document.getElementById('adminProductsTable');
   if(products.length === 0){ box.innerHTML = `<div class="empty-admin">Nenhum produto cadastrado. Clique em "+ Novo produto".</div>`; return; }
-  box.innerHTML = `<table><thead><tr><th></th><th>Produto</th><th>Origem</th><th>Categoria</th><th>Preço</th><th>Envio</th><th>Status</th><th>Ações</th></tr></thead><tbody>
+  box.innerHTML = `<table><thead><tr><th></th><th>Produto</th><th>Origem</th><th>Categoria</th><th>Preço</th><th>Estoque</th><th>Envio</th><th>Status</th><th>Ações</th></tr></thead><tbody>
     ${products.map(p => {
       const hasPromo = p.promoPrice && Number(p.promoPrice) > 0 && Number(p.promoPrice) < Number(p.price);
       const sectionName = p.categoryId ? (categories.find(c => c.id === p.categoryId)?.name || '—') : '—';
       const hasShippingData = p.weight && p.width && p.height && p.length;
+      const stockCell = (p.stock === null || p.stock === undefined)
+        ? '<span class="field-hint" style="margin:0;color:var(--muted)">Sem controle</span>'
+        : p.stock <= 0
+          ? '<span class="status-pill status-cancelado">Esgotado</span>'
+          : p.stock <= 5
+            ? `<span class="status-pill status-pendente">${p.stock} un.</span>`
+            : `<span class="status-pill status-entregue">${p.stock} un.</span>`;
       return `<tr>
         <td>${p.image ? `<img class="table-thumb" src="${escapeAttr(p.image)}" onerror="this.style.visibility='hidden'">` : `<div class="table-thumb"></div>`}</td>
         <td>${escapeHtml(p.name)}${p.badge ? `<br><span class="promo-badge">${escapeHtml(p.badge)}</span>` : ''}</td>
         <td><span class="cat-badge">${p.category === 'dropship' ? 'Dropshipping' : 'Produto próprio'}</span></td>
         <td>${escapeHtml(sectionName)}</td>
         <td>${money(hasPromo ? p.promoPrice : p.price)} ${hasPromo ? `<br><span class="price-old" style="font-size:0.76rem">${money(p.price)}</span>` : ''}</td>
+        <td>${stockCell}</td>
         <td>${hasShippingData
           ? `<span class="field-hint" style="margin:0;color:var(--muted)">${p.weight}kg · ${p.width}×${p.height}×${p.length}cm</span>`
           : `<span class="status-pill status-pendente" title="Sem peso/dimensão — a cotação de frete usa um pacote padrão genérico para este produto">Pacote padrão</span>`}</td>
@@ -2750,6 +2909,7 @@ function openProductForm(id){
     document.getElementById('pfPrice').value = p.price;
     document.getElementById('pfPromoPrice').value = p.promoPrice || '';
     document.getElementById('pfCost').value = (p.cost !== null && p.cost !== undefined) ? p.cost : '';
+    document.getElementById('pfStock').value = (p.stock !== null && p.stock !== undefined) ? p.stock : '';
     document.getElementById('pfWeight').value = p.weight || '';
     document.getElementById('pfWidth').value = p.width || '';
     document.getElementById('pfHeight').value = p.height || '';
@@ -2919,6 +3079,7 @@ async function submitProductForm(e){
     video: document.getElementById('pfVideo').value.trim(),
     price: parseFloat(document.getElementById('pfPrice').value),
     cost: document.getElementById('pfCost').value !== '' ? parseFloat(document.getElementById('pfCost').value) : null,
+    stock: document.getElementById('pfStock').value !== '' ? parseInt(document.getElementById('pfStock').value, 10) : null,
     promoPrice: promo ? parseFloat(promo) : null,
     category: document.getElementById('pfCategory').value,
     categoryId: document.getElementById('pfSection').value || null,

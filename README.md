@@ -149,13 +149,14 @@ dimensão e distância — usando o [Melhor Envio](https://melhorenvio.com.br),
 que agrega Correios e transportadoras privadas (Jadlog, Azul Cargo etc) numa
 única API.
 
-**Como funciona a prioridade:** o checkout mostra **todas as transportadoras**
-que o Melhor Envio retornar pra aquele CEP (Correios PAC/SEDEX, Jadlog/Gollog
-etc), mais a regra manual cadastrada no admin (se houver uma que bata com o
-CEP) — o cliente escolhe qual quer. Se o Melhor Envio não estiver configurado
-ou falhar por completo, sobra só a opção manual. Sem nenhuma das duas, o
-pedido é bloqueado com um aviso pro cliente falar com você — nunca sai frete
-grátis por acidente.
+**Como funciona a prioridade:** o checkout mostra as transportadoras que o
+Melhor Envio retornar pra aquele CEP **e que estiverem na lista de permitidas**
+(veja o passo 6 abaixo — por padrão, só Correios PAC/SEDEX e Gollog), mais a
+regra manual cadastrada no admin (se houver uma que bata com o CEP) — o
+cliente escolhe qual quer. Se o Melhor Envio não estiver configurado ou
+falhar por completo, sobra só a opção manual. Sem nenhuma das duas, o pedido
+é bloqueado com um aviso pro cliente falar com você — nunca sai frete grátis
+por acidente.
 
 1. Crie uma conta em [melhorenvio.com.br](https://melhorenvio.com.br).
 2. No painel, vá em **Gerenciar → Tokens → Novo Token** e gere um token
@@ -175,7 +176,22 @@ grátis por acidente.
    > testar em sandbox de verdade, é preciso criar uma conta separada em
    > `sandbox.melhorenvio.com.br` e gerar um token lá.
 
-6. **Seguro escolhido pelo cliente:** para cada transportadora, o checkout
+6. **Transportadoras permitidas:** o Melhor Envio cota várias transportadoras
+   (Correios, Jadlog, Azul Cargo, Gollog...), mas nem todas entregam em toda
+   região — em Cruzeiro do Sul (AC), por exemplo, só Correios (PAC/SEDEX) e
+   Gollog atendem de verdade. Por padrão o site já filtra pra mostrar só
+   essas. Pra ajustar, edite no `.env`:
+   ```
+   MELHOR_ENVIO_ALLOWED_COMPANIES=Gollog
+   MELHOR_ENVIO_ALLOWED_SERVICES=PAC,SEDEX
+   ```
+   `ALLOWED_COMPANIES` libera a transportadora inteira (qualquer serviço
+   dela); `ALLOWED_SERVICES` libera um serviço específico de qualquer
+   transportadora. Pra adicionar outra, é só separar por vírgula (ex:
+   `MELHOR_ENVIO_ALLOWED_COMPANIES=Gollog,Jadlog`). Deixar os dois em branco
+   mostra todas as transportadoras que o Melhor Envio retornar, sem filtro.
+
+7. **Seguro escolhido pelo cliente:** para cada transportadora, o checkout
    oferece duas opções de preço — uma com o seguro declarado limitado a
    `MELHOR_ENVIO_MAX_INSURANCE` (R$100 por item, ajustável no `.env`, frete
    mais barato) e outra com o seguro no valor cheio do produto (frete mais

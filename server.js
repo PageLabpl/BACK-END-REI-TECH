@@ -12,6 +12,7 @@ const mercadopago = require("./lib/mercadopago");
 const cloudinary = require("./lib/cloudinary");
 const email = require("./lib/email");
 const melhorenvio = require("./lib/melhorenvio");
+const nfe = require("./lib/nfe");
 
 const PORT = process.env.PORT || 3001;
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -79,8 +80,8 @@ const UPLOADS_DIR = path.join(__dirname, "uploads");
 if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 
 const DEFAULT_PRODUCTS = [
-  { id: "p1", name: "Fone Bluetooth 5.3 Pro", description: "Cancelamento de ruído ativo, até 30h de bateria e conexão dual.", specs: ["Bluetooth 5.3", "Até 30h de bateria", "Cancelamento de ruído ativo"], image: "", price: 299, promoPrice: null, category: "proprio", badge: "Mais vendido", active: true, weight: 0.3, width: 16, height: 11, length: 8 },
-  { id: "p2", name: "Carregador Turbo 30W", description: "Carga rápida USB-C com proteção contra sobrecarga e superaquecimento.", specs: ["Potência de 30W", "Entrada USB-C"], image: "", price: 79, promoPrice: null, category: "proprio", badge: "", active: true, weight: 0.2, width: 16, height: 11, length: 4 }
+  { id: "p1", name: "Fone Bluetooth 5.3 Pro", description: "Cancelamento de ruído ativo, até 30h de bateria e conexão dual.", specs: ["Bluetooth 5.3", "Até 30h de bateria", "Cancelamento de ruído ativo"], image: "", price: 299, promoPrice: null, category: "proprio", badge: "Mais vendido", active: true, weight: 0.3, width: 16, height: 11, length: 8, stock: null },
+  { id: "p2", name: "Carregador Turbo 30W", description: "Carga rápida USB-C com proteção contra sobrecarga e superaquecimento.", specs: ["Potência de 30W", "Entrada USB-C"], image: "", price: 79, promoPrice: null, category: "proprio", badge: "", active: true, weight: 0.2, width: 16, height: 11, length: 4, stock: null }
 ];
 
 // Peso/dimensões padrão pra produtos que ainda não tiveram isso preenchido —
@@ -422,7 +423,11 @@ router.post("/api/admin/products", requireAuth, async (req, res) => {
     weight: p.weight ? Number(p.weight) : null,
     width: p.width ? Number(p.width) : null,
     height: p.height ? Number(p.height) : null,
-    length: p.length ? Number(p.length) : null
+    length: p.length ? Number(p.length) : null,
+    // stock null = estoque não controlado (ex: dropshipping, sem limite
+    // aqui). Um número (mesmo 0) ativa o controle: bloqueia venda sem
+    // estoque e desconta a cada pedido.
+    stock: p.stock !== undefined && p.stock !== null && p.stock !== "" ? Math.max(0, parseInt(p.stock, 10) || 0) : null
   };
   products.push(product);
   await store.writeJSON("products.json", products);
@@ -452,7 +457,8 @@ router.put("/api/admin/products/:id", requireAuth, async (req, res) => {
     weight: p.weight !== undefined ? (p.weight ? Number(p.weight) : null) : products[idx].weight,
     width: p.width !== undefined ? (p.width ? Number(p.width) : null) : products[idx].width,
     height: p.height !== undefined ? (p.height ? Number(p.height) : null) : products[idx].height,
-    length: p.length !== undefined ? (p.length ? Number(p.length) : null) : products[idx].length
+    length: p.length !== undefined ? (p.length ? Number(p.length) : null) : products[idx].length,
+    stock: p.stock !== undefined ? (p.stock !== null && p.stock !== "" ? Math.max(0, parseInt(p.stock, 10) || 0) : null) : products[idx].stock
   };
   await store.writeJSON("products.json", products);
   json(res, 200, products[idx]);
@@ -465,6 +471,74 @@ router.delete("/api/admin/products/:id", requireAuth, async (req, res) => {
   products = products.filter((x) => x.id !== req.params.id);
   await store.writeJSON("products.json", products);
   json(res, 200, { deleted: true });
+});
+
+// ==================== ESTOQUE (entrada por nota fiscal) ====================
+//
+// Fluxo: o admin sobe o XML da NF-e de compra recebida do fornecedor →
+// POST /api/admin/stock-entries/parse-nfe lê o arquivo e devolve os itens
+// encontrados (sem tocar em nada ainda) → o admin escolhe, na tela, qual
+// produto do catálogo cada item da nota corresponde → confirma com POST
+// /api/admin/stock-entries, que aí sim soma a quantidade no estoque de
+// cada produto e grava um registro no histórico.
+
+// Só lê e devolve os itens da nota — não altera nenhum estoque ainda.
+router.post("/api/admin/stock-entries/parse-nfe", requireAuth, async (req, res) => {
+  const xml = (req.body || {}).xml;
+  if (!xml || typeof xml !== "string") {
+    return json(res, 400, { error: "Envie o conteúdo do arquivo XML da nota." });
+  }
+  try {
+    const parsed = nfe.parseNfeXml(xml);
+    json(res, 200, parsed);
+  } catch (e) {
+    json(res, 400, { error: e.message });
+  }
+});
+
+// Confirma a entrada: soma a quantidade de cada item no estoque do produto
+// correspondente (mapeado pelo admin na tela) e grava no histórico.
+router.post("/api/admin/stock-entries", requireAuth, async (req, res) => {
+  const b = req.body || {};
+  const items = Array.isArray(b.items) ? b.items : [];
+  const validItems = items.filter((i) => i && i.productId && Number(i.qty) > 0);
+  if (validItems.length === 0) {
+    return json(res, 400, { error: "Selecione ao menos um item com produto e quantidade válidos." });
+  }
+
+  const products = await store.readJSON("products.json", DEFAULT_PRODUCTS);
+  const appliedItems = [];
+  for (const item of validItems) {
+    const product = products.find((p) => p.id === item.productId);
+    if (!product) continue;
+    const qty = Math.max(1, parseInt(item.qty, 10) || 0);
+    // Se o produto ainda não tinha controle de estoque ativado (stock
+    // null), ativa agora a partir dessa entrada.
+    product.stock = (product.stock || 0) + qty;
+    appliedItems.push({ productId: product.id, name: product.name, qty, unitCost: item.unitCost != null ? Number(item.unitCost) : null });
+  }
+  if (appliedItems.length === 0) return json(res, 400, { error: "Nenhum item correspondeu a um produto existente." });
+  await store.writeJSON("products.json", products);
+
+  const entries = await store.readJSON("stock_entries.json", []);
+  const entry = {
+    id: "se_" + crypto.randomBytes(6).toString("hex"),
+    date: new Date().toISOString(),
+    source: b.source === "manual" ? "manual" : "nfe",
+    nfeKey: String(b.nfeKey || "").trim(),
+    nfeNumber: String(b.nfeNumber || "").trim(),
+    supplierName: String(b.supplierName || "").trim(),
+    note: String(b.note || "").trim(),
+    items: appliedItems
+  };
+  entries.unshift(entry); // mais recente primeiro
+  await store.writeJSON("stock_entries.json", entries.slice(0, 500)); // limite razoável de histórico
+  json(res, 201, entry);
+});
+
+router.get("/api/admin/stock-entries", requireAuth, async (req, res) => {
+  const entries = await store.readJSON("stock_entries.json", []);
+  json(res, 200, entries);
 });
 
 // ---- Categorias (setores/seções de produtos, criadas livremente pelo admin) ----
@@ -1003,12 +1077,30 @@ router.post("/api/orders", async (req, res) => {
   let total = 0;
   const resolvedItems = [];
   const shippingCartItems = []; // só usado pra cotar o frete, não é salvo no pedido
+  const stockUpdates = []; // { productId, newStock } — só produtos com estoque controlado
   for (const item of items) {
     const product = products.find((p) => p.id === item.productId);
     if (!product) continue;
     const hasPromo = product.promoPrice && Number(product.promoPrice) < Number(product.price);
     const unitPrice = hasPromo ? Number(product.promoPrice) : Number(product.price);
     const qty = Math.max(1, parseInt(item.qty, 10) || 1);
+
+    // Estoque: só bloqueia/desconta em produtos com controle ativado
+    // (stock não-nulo). Dropshipping e produtos sem stock definido vendem
+    // sem limite, como sempre.
+    if (product.stock !== null && product.stock !== undefined) {
+      const alreadyReserved = stockUpdates.find((s) => s.productId === product.id);
+      const currentStock = alreadyReserved ? alreadyReserved.newStock : product.stock;
+      if (currentStock < qty) {
+        return json(res, 400, { error: `Estoque insuficiente para "${product.name}" — restam ${currentStock} unidade(s).` });
+      }
+      if (alreadyReserved) {
+        alreadyReserved.newStock -= qty;
+      } else {
+        stockUpdates.push({ productId: product.id, newStock: currentStock - qty });
+      }
+    }
+
     total += unitPrice * qty;
     resolvedItems.push({
       productId: product.id,
@@ -1115,6 +1207,8 @@ router.post("/api/admin/orders/manual", requireAuth, async (req, res) => {
   const products = await store.readJSON("products.json", DEFAULT_PRODUCTS);
   let total = 0;
   const resolvedItems = [];
+  const stockUpdates = [];
+  let stockWarning = "";
   for (const item of items) {
     const product = products.find((p) => p.id === item.productId);
     if (!product) continue;
@@ -1126,6 +1220,19 @@ router.post("/api/admin/orders/manual", requireAuth, async (req, res) => {
     const unitPrice = item.unitPrice !== undefined && item.unitPrice !== null && item.unitPrice !== ""
       ? Number(item.unitPrice)
       : catalogPrice;
+
+    // Estoque: desconta se controlado, mas NÃO bloqueia a venda manual —
+    // o admin pode estar registrando algo que já vendeu fisicamente, então
+    // deixamos ir mesmo que fique negativo, só avisando no retorno.
+    if (product.stock !== null && product.stock !== undefined) {
+      const existing = stockUpdates.find((s) => s.productId === product.id);
+      const currentStock = existing ? existing.newStock : product.stock;
+      const newStock = currentStock - qty;
+      if (newStock < 0) stockWarning = "Atenção: o estoque de um ou mais produtos ficou negativo — confira o cadastro.";
+      if (existing) existing.newStock = newStock;
+      else stockUpdates.push({ productId: product.id, newStock });
+    }
+
     total += unitPrice * qty;
     resolvedItems.push({
       productId: product.id,
@@ -1166,7 +1273,16 @@ router.post("/api/admin/orders/manual", requireAuth, async (req, res) => {
   };
   orders.push(order);
   await store.writeJSON("orders.json", orders);
-  json(res, 201, order);
+
+  if (stockUpdates.length > 0) {
+    stockUpdates.forEach((s) => {
+      const p = products.find((x) => x.id === s.productId);
+      if (p) p.stock = s.newStock;
+    });
+    await store.writeJSON("products.json", products);
+  }
+
+  json(res, 201, stockWarning ? { ...order, stockWarning } : order);
 });
 
 // Consulta pública e enxuta de um pedido específico. Usada pelo site para
@@ -1193,8 +1309,25 @@ router.put("/api/admin/orders/:id/status", requireAuth, async (req, res) => {
   const allowed = ["pendente", "confirmado", "enviado", "entregue", "cancelado", "teste"];
   if (!allowed.includes(req.body.status)) return json(res, 400, { error: "Status inválido." });
   const wasConfirmed = ["confirmado", "enviado", "entregue"].includes(order.status);
+  const wasCancelled = order.status === "cancelado";
   order.status = req.body.status;
   await store.writeJSON("orders.json", orders);
+
+  // Se o pedido está sendo cancelado agora (e ainda não tinha sido antes),
+  // devolve pro estoque os itens que tinham controle ativado — evita
+  // "perder" estoque em pedidos cancelados/estornados.
+  if (req.body.status === "cancelado" && !wasCancelled) {
+    const products = await store.readJSON("products.json", DEFAULT_PRODUCTS);
+    let changed = false;
+    order.items.forEach((item) => {
+      const p = products.find((x) => x.id === item.productId);
+      if (p && p.stock !== null && p.stock !== undefined) {
+        p.stock += item.qty;
+        changed = true;
+      }
+    });
+    if (changed) await store.writeJSON("products.json", products);
+  }
 
   // Se o pedido está virando "confirmado" agora (não estava antes), manda o
   // e-mail de confirmação — cobre o caso de pagamento combinado manualmente
