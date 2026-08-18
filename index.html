@@ -253,12 +253,18 @@
   .shipping-summary{ border:1px solid var(--card-border); border-radius:10px; padding:14px 16px; margin-bottom:16px; }
   .shipping-summary .row{ display:flex; justify-content:space-between; font-size:0.86rem; color:var(--muted); padding:4px 0; }
   .shipping-summary .row.total{ border-top:1px solid var(--card-border); margin-top:6px; padding-top:10px; font-size:1rem; font-weight:700; color:var(--text); }
-  .shipping-option{ display:flex; align-items:center; gap:10px; padding:9px 8px; border-radius:8px; cursor:pointer; font-size:0.86rem; }
-  .shipping-option:hover{ background:rgba(255,255,255,0.03); }
-  .shipping-option input[type="radio"]{ accent-color:var(--blue); flex-shrink:0; }
-  .shipping-option .opt-label{ flex:1; color:var(--text); }
-  .shipping-option .opt-days{ color:var(--muted); font-size:0.78rem; display:block; }
-  .shipping-option .opt-price{ font-weight:700; color:var(--text); }
+  .shipping-option{ display:flex; align-items:center; gap:10px; padding:10px 12px; border:1px solid var(--card-border); border-radius:9px; margin-bottom:8px; cursor:pointer; transition:border-color .2s, background .2s; }
+  .shipping-option:hover{ border-color:var(--blue-soft); }
+  .shipping-option.selected{ border-color:var(--blue-soft); background:rgba(77,163,255,0.08); }
+  .shipping-option input{ accent-color:var(--blue); flex-shrink:0; }
+  .shipping-option .info{ flex:1; min-width:0; }
+  .shipping-option .info .top-row{ display:flex; justify-content:space-between; gap:10px; align-items:baseline; }
+  .shipping-option .info .label{ font-size:0.88rem; font-weight:600; }
+  .shipping-option .info .price{ font-size:0.92rem; font-weight:700; color:var(--blue-soft); white-space:nowrap; }
+  .shipping-option .info .meta{ font-size:0.76rem; color:var(--muted); margin-top:2px; }
+  .shipping-option .insurance-toggle{ font-size:0.74rem; margin-top:6px; }
+  .shipping-option .insurance-toggle label{ display:flex; align-items:center; gap:6px; color:var(--muted); cursor:pointer; }
+  .shipping-option .insurance-toggle input{ width:13px; height:13px; }
   .cep-status.loading{ color:var(--muted); }
   .cep-status.ok{ color:var(--success); }
   .cep-status.error{ color:var(--danger); }
@@ -602,7 +608,8 @@
       </div>
       <div class="shipping-summary" id="shippingSummary" style="display:none">
         <div class="row"><span>Subtotal</span><span id="shippingSummarySubtotal"></span></div>
-        <div id="shippingOptionsList" style="margin:10px 0;"></div>
+        <div class="field" style="margin:10px 0 6px"><label style="margin-bottom:8px">Opções de frete</label></div>
+        <div id="shippingOptionsList"></div>
         <div class="row total"><span>Total</span><span id="shippingSummaryTotal"></span></div>
       </div>
       <p class="field-hint" id="shippingError" style="display:none;color:var(--danger);margin-bottom:14px"></p>
@@ -1787,11 +1794,89 @@ function toggleShippingAddress(){
   updateShippingQuote();
 }
 
-/* ---- Frete: consulta a regra cadastrada no admin assim que CEP+estado
-   do endereço de entrega estão preenchidos, e mostra o total já com frete
-   antes do cliente confirmar o pedido. ---- */
-let currentShippingQuote = null; // opção de frete selecionada no momento: { price, label, company, service, estimatedDays } | null
-let shippingOptionsCache = []; // todas as opções que vieram da última cotação
+/* ---- Frete: consulta as opções disponíveis (Melhor Envio + regras
+   manuais) assim que CEP+estado do endereço de entrega estão preenchidos,
+   agrupa por transportadora, e deixa o cliente escolher qual quer e se
+   quer segurar o valor total da mercadoria. ---- */
+let shippingGroups = []; // [{ key, label, estimatedDays, reduzido, total, single }]
+let selectedShippingGroupKey = null;
+let selectedShippingInsured = false; // true = seguro total, false = reduzido/único
+
+function groupShippingOptions(options){
+  const map = new Map();
+  options.forEach(o => {
+    const key = o.source + '::' + o.label;
+    if(!map.has(key)) map.set(key, { key, label: o.label, estimatedDays: o.estimatedDays, source: o.source, reduzido: null, total: null, single: null });
+    const g = map.get(key);
+    if(o.insurance === 'reduzido') g.reduzido = o;
+    else if(o.insurance === 'total') g.total = o;
+    else g.single = o;
+  });
+  return Array.from(map.values()).sort((a, b) => {
+    const priceOf = (g) => (g.single || g.reduzido).price;
+    return priceOf(a) - priceOf(b);
+  });
+}
+function currentOptionForGroup(g){
+  if(g.single) return g.single;
+  return selectedShippingInsured && g.total ? g.total : g.reduzido;
+}
+function renderShippingOptions(){
+  const box = document.getElementById('shippingOptionsList');
+  box.innerHTML = shippingGroups.map(g => {
+    const opt = currentOptionForGroup(g);
+    const selected = g.key === selectedShippingGroupKey;
+    const hasInsuranceChoice = !g.single && g.total && g.total.price > g.reduzido.price;
+    return `
+    <div class="shipping-option${selected ? ' selected' : ''}" onclick="selectShippingGroup('${g.key.replace(/'/g,"\\'")}')">
+      <input type="radio" name="shippingGroup" ${selected ? 'checked' : ''} onclick="event.stopPropagation(); selectShippingGroup('${g.key.replace(/'/g,"\\'")}')">
+      <div class="info">
+        <div class="top-row">
+          <span class="label">${escapeHtml(g.label)}</span>
+          <span class="price">${money(opt.price)}</span>
+        </div>
+        <div class="meta">${g.estimatedDays ? `até ${g.estimatedDays} dia(s) útil(is)` : 'prazo a confirmar'}</div>
+        ${hasInsuranceChoice ? `
+        <div class="insurance-toggle" onclick="event.stopPropagation()">
+          <label>
+            <input type="checkbox" ${selected && selectedShippingInsured ? 'checked' : ''} onchange="toggleShippingInsurance('${g.key.replace(/'/g,"\\'")}', this.checked)">
+            Segurar valor total da mercadoria (+${money(g.total.price - g.reduzido.price)})
+          </label>
+        </div>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+}
+function selectShippingGroup(key){
+  selectedShippingGroupKey = key;
+  const g = shippingGroups.find(x => x.key === key);
+  // Ao trocar de transportadora, mantém a preferência de seguro se aquela
+  // também oferecer a opção; senão volta pro reduzido.
+  if(g && g.single) selectedShippingInsured = false;
+  else if(g && !g.total) selectedShippingInsured = false;
+  renderShippingOptions();
+  updateShippingTotals();
+}
+function toggleShippingInsurance(key, checked){
+  selectedShippingGroupKey = key;
+  selectedShippingInsured = checked;
+  renderShippingOptions();
+  updateShippingTotals();
+}
+function updateShippingTotals(){
+  const g = shippingGroups.find(x => x.key === selectedShippingGroupKey);
+  const subtotal = cartTotal();
+  const shippingPrice = g ? currentOptionForGroup(g).price : 0;
+  document.getElementById('shippingSummarySubtotal').textContent = money(subtotal);
+  document.getElementById('shippingSummaryTotal').textContent = money(subtotal + shippingPrice);
+}
+function getSelectedShippingOption(){
+  const g = shippingGroups.find(x => x.key === selectedShippingGroupKey);
+  if(!g) return null;
+  const opt = currentOptionForGroup(g);
+  return { label: opt.label, source: opt.source, insurance: opt.insurance };
+}
+
 async function updateShippingQuote(){
   const same = document.getElementById('ckSameAddress').checked;
   const prefix = same ? 'ck' : 'ckShip';
@@ -1804,47 +1889,31 @@ async function updateShippingQuote(){
   if(cep.length !== 8){
     summary.style.display = 'none';
     errEl.style.display = 'none';
-    currentShippingQuote = null;
-    shippingOptionsCache = [];
+    shippingGroups = [];
+    selectedShippingGroupKey = null;
     return;
   }
   try{
-    const res = await api(`/api/shipping/quote`, {
+    const data = await api(`/api/shipping/quote`, {
       method: "POST",
       body: { cep, state, items: cart.map(c => ({ productId: c.productId, qty: c.qty })) }
     });
-    shippingOptionsCache = res.options || [];
-    currentShippingQuote = shippingOptionsCache[0] || null;
+    shippingGroups = groupShippingOptions(data.options || []);
+    selectedShippingGroupKey = shippingGroups.length ? shippingGroups[0].key : null;
+    selectedShippingInsured = false;
     errEl.style.display = 'none';
-    submitBtn.disabled = false;
+    submitBtn.disabled = shippingGroups.length === 0;
     renderShippingOptions();
+    updateShippingTotals();
     summary.style.display = 'block';
   }catch(err){
-    currentShippingQuote = null;
-    shippingOptionsCache = [];
+    shippingGroups = [];
+    selectedShippingGroupKey = null;
     summary.style.display = 'none';
     errEl.textContent = err.message;
     errEl.style.display = 'block';
     submitBtn.disabled = true;
   }
-}
-function renderShippingOptions(){
-  const subtotal = cartTotal();
-  document.getElementById('shippingSummarySubtotal').textContent = money(subtotal);
-  const list = document.getElementById('shippingOptionsList');
-  list.innerHTML = shippingOptionsCache.map((opt, i) => `
-    <label class="shipping-option">
-      <input type="radio" name="shippingOption" value="${i}" ${currentShippingQuote === opt ? 'checked' : ''} onchange="selectShippingOption(${i})">
-      <span class="opt-label">${escapeHtml(opt.label || 'Frete')}${opt.estimatedDays ? `<span class="opt-days">até ${opt.estimatedDays} dias úteis</span>` : ''}</span>
-      <span class="opt-price">${money(opt.price)}</span>
-    </label>
-  `).join('');
-  const total = subtotal + (currentShippingQuote ? currentShippingQuote.price : 0);
-  document.getElementById('shippingSummaryTotal').textContent = money(total);
-}
-function selectShippingOption(idx){
-  currentShippingQuote = shippingOptionsCache[idx];
-  renderShippingOptions();
 }
 // Se o cliente estiver logado, pré-preenche o formulário com os dados salvos
 // da conta (padrão "Amazon") — ele ainda pode editar antes de confirmar.
@@ -1877,21 +1946,19 @@ async function submitOrder(e){
   };
   const shippingAddress = sameAddress ? customer.address : readAddressFields('ckShip');
   const items = cart.map(c => ({ productId: c.productId, qty: c.qty, color: c.color || '' }));
+  const shippingOption = getSelectedShippingOption();
+  if(!shippingOption){
+    btn.disabled = false;
+    btn.textContent = "Ir para o pagamento";
+    showToast("Escolha uma opção de frete antes de continuar.");
+    return;
+  }
 
   let order;
   try{
     // O servidor recalcula o preço real de cada item — o total exibido aqui é só uma estimativa.
     // Se o cliente estiver logado, o pedido fica vinculado à conta dele automaticamente.
-    order = await api("/api/orders", {
-      method: "POST",
-      body: {
-        customer,
-        items,
-        shippingAddress,
-        shipping: currentShippingQuote ? { company: currentShippingQuote.company || '', service: currentShippingQuote.service || '' } : undefined
-      },
-      customerAuth: !!customerToken
-    });
+    order = await api("/api/orders", { method: "POST", body: { customer, items, shippingAddress, shippingOption }, customerAuth: !!customerToken });
   }catch(err){
     btn.disabled = false;
     btn.textContent = "Ir para o pagamento";
@@ -2932,12 +2999,13 @@ function renderAdminOrders(){
   if(orders.length === 0){ box.innerHTML = `<div class="empty-admin">Nenhum pedido registrado ainda.</div>`; return; }
   if(filtered.length === 0){ box.innerHTML = `<div class="empty-admin">Nenhum pedido encontrado nesse período.</div>`; return; }
   const sorted = [...filtered].sort((a,b)=> new Date(b.date) - new Date(a.date));
-  box.innerHTML = `<table><thead><tr><th>Data</th><th>Cliente</th><th>Contato</th><th>Endereço de entrega</th><th>Itens</th><th>Total</th><th>Pagamento</th><th>Status</th></tr></thead><tbody>
+  box.innerHTML = `<table><thead><tr><th>Data</th><th>Cliente</th><th>Contato</th><th>Endereço de entrega</th><th>Frete</th><th>Itens</th><th>Total</th><th>Pagamento</th><th>Status</th></tr></thead><tbody>
     ${sorted.map(o => `<tr>
       <td>${formatDate(o.date)}${o.manual ? '<br><span style="font-size:0.72rem;color:var(--muted)">venda manual</span>' : ''}</td>
       <td>${escapeHtml(o.customer.name)}</td>
       <td>${escapeHtml(o.customer.phone)}</td>
       <td style="max-width:220px">${escapeHtml(o.shippingAddressText || o.customer.addressText || '')}</td>
+      <td style="max-width:160px">${o.shippingLabel ? escapeHtml(o.shippingLabel) : '—'}${o.shippingCost ? '<br>' + money(o.shippingCost) : ''}${o.shippingInsurance === 'total' ? '<br><span class="promo-badge">seguro total</span>' : ''}</td>
       <td>${o.items.map(i => `${i.qty}x ${escapeHtml(i.name)}${i.color ? ' (' + escapeHtml(i.color) + ')' : ''}`).join('<br>')}</td>
       <td>${money(o.total)}</td>
       <td>${paymentMethodLabel(o.paymentMethod)}</td>
