@@ -46,6 +46,27 @@ const MELHOR_ENVIO_MAX_INSURANCE = process.env.MELHOR_ENVIO_MAX_INSURANCE
   : 100;
 const CONTACT_EMAIL = process.env.RESEND_FROM_EMAIL || "contato@reitech.com";
 
+// Filtro de transportadoras/serviços de frete: por padrão só mostra
+// Correios PAC/SEDEX + qualquer serviço da Gollog — as únicas que
+// realmente atendem regiões como Cruzeiro do Sul (AC). Empresas tipo
+// Jadlog e Azul Cargo Express aparecem na cotação do Melhor Envio mas não
+// entregam nessas cidades, então ficam de fora. Ajustável sem mexer no
+// código: MELHOR_ENVIO_ALLOWED_COMPANIES (nome da transportadora inteira,
+// qualquer serviço dela) e MELHOR_ENVIO_ALLOWED_SERVICES (nome exato do
+// serviço, de qualquer transportadora).
+const MELHOR_ENVIO_ALLOWED_COMPANIES = (process.env.MELHOR_ENVIO_ALLOWED_COMPANIES || "Gollog")
+  .split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+const MELHOR_ENVIO_ALLOWED_SERVICES = (process.env.MELHOR_ENVIO_ALLOWED_SERVICES || "PAC,SEDEX")
+  .split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+
+function isAllowedCarrier(q) {
+  const company = String(q.company || "").trim().toLowerCase();
+  const service = String(q.service || "").trim().toLowerCase();
+  if (MELHOR_ENVIO_ALLOWED_COMPANIES.some((c) => company.includes(c))) return true;
+  if (MELHOR_ENVIO_ALLOWED_SERVICES.includes(service)) return true;
+  return false;
+}
+
 if (!JWT_SECRET || !ADMIN_PASSWORD_HASH) {
   console.error(
     "\n[ERRO] Configure o arquivo .env antes de iniciar o servidor.\n" +
@@ -243,7 +264,7 @@ async function getShippingOptions({ address, cartItems }) {
 
   if (MELHOR_ENVIO_TOKEN && MELHOR_ENVIO_FROM_CEP) {
     try {
-      const quotes = await melhorenvio.calculateShippingOptions({
+      const quotes = (await melhorenvio.calculateShippingOptions({
         token: MELHOR_ENVIO_TOKEN,
         fromCep: MELHOR_ENVIO_FROM_CEP,
         toCep: address.cep,
@@ -252,7 +273,7 @@ async function getShippingOptions({ address, cartItems }) {
         defaultPackage: DEFAULT_PACKAGE,
         userAgent: `${STORE_NAME} (${CONTACT_EMAIL})`,
         reducedInsuranceCap: MELHOR_ENVIO_MAX_INSURANCE
-      });
+      })).filter(isAllowedCarrier);
       for (const q of quotes) {
         const label = q.company ? `${q.company} - ${q.service}` : q.service;
         options.push({
