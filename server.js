@@ -80,8 +80,8 @@ const UPLOADS_DIR = path.join(__dirname, "uploads");
 if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 
 const DEFAULT_PRODUCTS = [
-  { id: "p1", name: "Fone Bluetooth 5.3 Pro", description: "Cancelamento de ruído ativo, até 30h de bateria e conexão dual.", specs: ["Bluetooth 5.3", "Até 30h de bateria", "Cancelamento de ruído ativo"], image: "", price: 299, promoPrice: null, category: "proprio", badge: "Mais vendido", active: true, weight: 0.3, width: 16, height: 11, length: 8, stock: null },
-  { id: "p2", name: "Carregador Turbo 30W", description: "Carga rápida USB-C com proteção contra sobrecarga e superaquecimento.", specs: ["Potência de 30W", "Entrada USB-C"], image: "", price: 79, promoPrice: null, category: "proprio", badge: "", active: true, weight: 0.2, width: 16, height: 11, length: 4, stock: null }
+  { id: "p1", name: "Fone Bluetooth 5.3 Pro", description: "Cancelamento de ruído ativo, até 30h de bateria e conexão dual.", specs: ["Bluetooth 5.3", "Até 30h de bateria", "Cancelamento de ruído ativo"], image: "", price: 299, promoPrice: null, category: "proprio", badge: "Mais vendido", active: true, weight: 0.3, width: 16, height: 11, length: 8, stock: null, barcode: "", sku: "", minStock: null },
+  { id: "p2", name: "Carregador Turbo 30W", description: "Carga rápida USB-C com proteção contra sobrecarga e superaquecimento.", specs: ["Potência de 30W", "Entrada USB-C"], image: "", price: 79, promoPrice: null, category: "proprio", badge: "", active: true, weight: 0.2, width: 16, height: 11, length: 4, stock: null, barcode: "", sku: "", minStock: null }
 ];
 
 // Peso/dimensões padrão pra produtos que ainda não tiveram isso preenchido —
@@ -427,7 +427,17 @@ router.post("/api/admin/products", requireAuth, async (req, res) => {
     // stock null = estoque não controlado (ex: dropshipping, sem limite
     // aqui). Um número (mesmo 0) ativa o controle: bloqueia venda sem
     // estoque e desconta a cada pedido.
-    stock: p.stock !== undefined && p.stock !== null && p.stock !== "" ? Math.max(0, parseInt(p.stock, 10) || 0) : null
+    stock: p.stock !== undefined && p.stock !== null && p.stock !== "" ? Math.max(0, parseInt(p.stock, 10) || 0) : null,
+    // Código de barras (EAN/GTIN) — usado para localizar o produto rápido
+    // na tela de estoque (bipando ou digitando) e também preenchido
+    // automaticamente ao ler uma NF-e que já traga esse código.
+    barcode: String(p.barcode || "").trim(),
+    // Código/referência interna do lojista (SKU) — independente do código
+    // de barras, útil pra quem organiza o estoque por referência própria.
+    sku: String(p.sku || "").trim(),
+    // Estoque mínimo: abaixo desse número o produto aparece com alerta de
+    // "estoque baixo" no admin. null = usa o padrão da tela (5 unidades).
+    minStock: p.minStock !== undefined && p.minStock !== null && p.minStock !== "" ? Math.max(0, parseInt(p.minStock, 10) || 0) : null
   };
   products.push(product);
   await store.writeJSON("products.json", products);
@@ -458,10 +468,26 @@ router.put("/api/admin/products/:id", requireAuth, async (req, res) => {
     width: p.width !== undefined ? (p.width ? Number(p.width) : null) : products[idx].width,
     height: p.height !== undefined ? (p.height ? Number(p.height) : null) : products[idx].height,
     length: p.length !== undefined ? (p.length ? Number(p.length) : null) : products[idx].length,
-    stock: p.stock !== undefined ? (p.stock !== null && p.stock !== "" ? Math.max(0, parseInt(p.stock, 10) || 0) : null) : products[idx].stock
+    stock: p.stock !== undefined ? (p.stock !== null && p.stock !== "" ? Math.max(0, parseInt(p.stock, 10) || 0) : null) : products[idx].stock,
+    barcode: p.barcode !== undefined ? String(p.barcode).trim() : (products[idx].barcode || ""),
+    sku: p.sku !== undefined ? String(p.sku).trim() : (products[idx].sku || ""),
+    minStock: p.minStock !== undefined ? (p.minStock !== null && p.minStock !== "" ? Math.max(0, parseInt(p.minStock, 10) || 0) : null) : (products[idx].minStock !== undefined ? products[idx].minStock : null)
   };
   await store.writeJSON("products.json", products);
   json(res, 200, products[idx]);
+});
+
+// Busca rápida de produto por código de barras (bipando/digitando) — usada
+// na tela de Estoque para o lançamento manual. Também aceita casar pelo SKU
+// (código/referência interna), caso o lojista use um leitor configurado
+// pra ler etiquetas próprias em vez do EAN de fábrica.
+router.get("/api/admin/products/by-code/:code", requireAuth, async (req, res) => {
+  const code = String(req.params.code || "").trim();
+  if (!code) return json(res, 400, { error: "Informe um código." });
+  const products = await store.readJSON("products.json", DEFAULT_PRODUCTS);
+  const product = products.find((p) => (p.barcode && p.barcode === code) || (p.sku && p.sku === code));
+  if (!product) return json(res, 404, { error: "Nenhum produto encontrado com esse código." });
+  json(res, 200, product);
 });
 
 router.delete("/api/admin/products/:id", requireAuth, async (req, res) => {
@@ -496,29 +522,101 @@ router.post("/api/admin/stock-entries/parse-nfe", requireAuth, async (req, res) 
   }
 });
 
-// Confirma a entrada: soma a quantidade de cada item no estoque do produto
-// correspondente (mapeado pelo admin na tela) e grava no histórico.
+// Confirma o lançamento: aplica cada item no estoque do produto
+// correspondente e grava no histórico. Cobre três origens:
+//   - "nfe": itens lidos do XML da nota, mapeados pelo admin a produtos do
+//     catálogo (ou a um produto novo, criado aqui mesmo — ver newProduct).
+//   - "manual": lançamento avulso feito direto na tela de Estoque, sem nota.
+// Cada item pode ter um "type": "entrada" (padrão, soma), "saida" (subtrai,
+// pra perdas/quebras/devolução ao fornecedor) ou "ajuste" (define o estoque
+// nesse valor exato, pra bater com uma contagem física).
 router.post("/api/admin/stock-entries", requireAuth, async (req, res) => {
   const b = req.body || {};
   const items = Array.isArray(b.items) ? b.items : [];
-  const validItems = items.filter((i) => i && i.productId && Number(i.qty) > 0);
-  if (validItems.length === 0) {
-    return json(res, 400, { error: "Selecione ao menos um item com produto e quantidade válidos." });
+  if (items.length === 0) {
+    return json(res, 400, { error: "Informe ao menos um item para lançar no estoque." });
   }
 
   const products = await store.readJSON("products.json", DEFAULT_PRODUCTS);
   const appliedItems = [];
-  for (const item of validItems) {
-    const product = products.find((p) => p.id === item.productId);
+  let productsChanged = false;
+  let stockWarning = "";
+
+  for (const item of items) {
+    if (!item) continue;
+    let product = null;
+
+    if (item.newProduct && item.newProduct.name) {
+      // Item da nota (ou lançamento manual) que ainda não existe no
+      // catálogo — cadastra o produto agora e já vincula a essa entrada,
+      // em vez de obrigar o admin a ir na aba Produtos primeiro.
+      const np = item.newProduct;
+      product = {
+        id: "p_" + crypto.randomBytes(6).toString("hex"),
+        name: String(np.name).trim(),
+        description: String(np.description || "").trim(),
+        specs: [],
+        image: "",
+        images: [],
+        video: "",
+        price: np.price !== undefined && np.price !== null && np.price !== "" ? Number(np.price) : 0,
+        cost: np.cost !== undefined && np.cost !== null && np.cost !== ""
+          ? Number(np.cost)
+          : (item.unitCost != null ? Number(item.unitCost) : null),
+        promoPrice: null,
+        category: "proprio",
+        categoryId: null,
+        badge: "",
+        active: true,
+        weight: null,
+        width: null,
+        height: null,
+        length: null,
+        barcode: String(np.barcode || "").trim(),
+        sku: String(np.sku || "").trim(),
+        minStock: null,
+        stock: 0
+      };
+      if (!product.name) continue;
+      products.push(product);
+      productsChanged = true;
+    } else if (item.productId) {
+      product = products.find((p) => p.id === item.productId);
+    }
     if (!product) continue;
-    const qty = Math.max(1, parseInt(item.qty, 10) || 0);
-    // Se o produto ainda não tinha controle de estoque ativado (stock
-    // null), ativa agora a partir dessa entrada.
-    product.stock = (product.stock || 0) + qty;
-    appliedItems.push({ productId: product.id, name: product.name, qty, unitCost: item.unitCost != null ? Number(item.unitCost) : null });
+
+    const type = item.type === "saida" ? "saida" : item.type === "ajuste" ? "ajuste" : "entrada";
+    const before = product.stock || 0;
+
+    if (type === "ajuste") {
+      const target = Math.max(0, parseInt(item.qty, 10) || 0);
+      product.stock = target;
+    } else {
+      const qty = Math.max(0, parseInt(item.qty, 10) || 0);
+      if (qty <= 0) continue;
+      if (type === "entrada") {
+        product.stock = (product.stock || 0) + qty;
+      } else {
+        const next = (product.stock || 0) - qty;
+        if (next < 0) stockWarning = "Atenção: uma ou mais saídas deixaram o estoque negativo — confira o cadastro.";
+        product.stock = Math.max(0, next);
+      }
+    }
+    productsChanged = true;
+
+    appliedItems.push({
+      productId: product.id,
+      name: product.name,
+      type,
+      qty: type === "ajuste" ? (product.stock - before) : Math.max(0, parseInt(item.qty, 10) || 0),
+      before,
+      after: product.stock,
+      unitCost: item.unitCost != null && item.unitCost !== "" ? Number(item.unitCost) : null
+    });
   }
-  if (appliedItems.length === 0) return json(res, 400, { error: "Nenhum item correspondeu a um produto existente." });
-  await store.writeJSON("products.json", products);
+
+  if (appliedItems.length === 0) return json(res, 400, { error: "Nenhum item válido para lançar no estoque." });
+  if (productsChanged) await store.writeJSON("products.json", products);
 
   const entries = await store.readJSON("stock_entries.json", []);
   const entry = {
@@ -533,7 +631,7 @@ router.post("/api/admin/stock-entries", requireAuth, async (req, res) => {
   };
   entries.unshift(entry); // mais recente primeiro
   await store.writeJSON("stock_entries.json", entries.slice(0, 500)); // limite razoável de histórico
-  json(res, 201, entry);
+  json(res, 201, stockWarning ? { ...entry, stockWarning } : entry);
 });
 
 router.get("/api/admin/stock-entries", requireAuth, async (req, res) => {
