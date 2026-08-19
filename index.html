@@ -1038,8 +1038,8 @@
         <div style="display:flex; gap:16px; align-items:flex-start; flex-wrap:wrap;">
           <img id="bnImagePreview" src="" alt="" style="width:140px; height:52px; border-radius:9px; object-fit:cover; background:#080b14; border:1px solid var(--card-border); display:none;">
           <div style="flex:1; min-width:200px;">
-            <input type="file" id="bnImageFile" accept="image/*" onchange="handleImageUpload(event, 'bnImagePreview', 'bnImage')">
-            <p class="field-hint">Ideal: imagem larga (ex: 1600×500px). Ou cole um link abaixo.</p>
+            <input type="file" id="bnImageFile" accept="image/*" onchange="handleImageUpload(event, 'bnImagePreview', 'bnImage', 2000, 0.85)">
+            <p class="field-hint">Ideal: imagem larga (ex: 1920×600px ou maior) e já no formato horizontal do banner — evita cortes estranhos e garante nitidez em telas grandes.</p>
             <input type="url" id="bnImage" placeholder="https://..." required style="margin-top:8px" oninput="document.getElementById('bnImagePreview').src=this.value; document.getElementById('bnImagePreview').style.display=this.value?'block':'none';">
           </div>
         </div>
@@ -3154,12 +3154,12 @@ function compressImageFile(file, maxDim = 900, quality = 0.72){
   });
 }
 
-async function handleImageUpload(e, previewId = 'pfImagePreview', inputId = 'pfImage'){
+async function handleImageUpload(e, previewId = 'pfImagePreview', inputId = 'pfImage', maxDim = 900, quality = 0.72){
   const file = e.target.files[0];
   if(!file) return;
   const preview = document.getElementById(previewId);
   try{
-    const dataUrl = await compressImageFile(file);
+    const dataUrl = await compressImageFile(file, maxDim, quality);
     preview.src = dataUrl;
     preview.style.display = 'block';
     showToast("Enviando imagem para o servidor...");
