@@ -168,6 +168,26 @@ function publicCustomer(c) {
   return rest;
 }
 
+// Log de atividades do admin: registra as principais ações feitas no
+// painel (criar/editar/excluir produto, mudar status de pedido, etc).
+// Hoje só existe um login de admin, então serve mais como um histórico
+// de auditoria do que foi feito e quando — mas já fica pronto para o dia
+// em que existir mais de um usuário administrando a loja.
+async function logAction(type, description) {
+  try {
+    const log = await store.readJSON("action_log.json", []);
+    log.unshift({
+      id: "log_" + crypto.randomBytes(6).toString("hex"),
+      date: new Date().toISOString(),
+      type,
+      description
+    });
+    await store.writeJSON("action_log.json", log.slice(0, 500)); // limite razoável de histórico
+  } catch (e) {
+    console.error("Falha ao gravar log de ação:", e.message);
+  }
+}
+
 // Endereço estruturado (não é mais um campo de texto livre). "complement"
 // é o único campo opcional — todos os outros são obrigatórios para fechar
 // um pedido, já que sem eles a entrega não tem como acontecer.
@@ -443,10 +463,15 @@ router.post("/api/admin/products", requireAuth, async (req, res) => {
     cst: String(p.cst || "").trim(),
     // Estoque mínimo: abaixo desse número o produto aparece com alerta de
     // "estoque baixo" no admin. null = usa o padrão da tela (5 unidades).
-    minStock: p.minStock !== undefined && p.minStock !== null && p.minStock !== "" ? Math.max(0, parseInt(p.minStock, 10) || 0) : null
+    minStock: p.minStock !== undefined && p.minStock !== null && p.minStock !== "" ? Math.max(0, parseInt(p.minStock, 10) || 0) : null,
+    // Histórico de custo: cada mudança no custo unitário (aqui, na edição,
+    // ou automaticamente numa entrada de estoque) fica registrada com data
+    // — ajuda a calcular a margem real depois, não só o último preço pago.
+    costHistory: (p.cost !== undefined && p.cost !== null && p.cost !== "") ? [{ date: new Date().toISOString(), cost: Number(p.cost) }] : []
   };
   products.push(product);
   await store.writeJSON("products.json", products);
+  await logAction("produto", `Produto "${product.name}" criado`);
   json(res, 201, product);
 });
 
@@ -455,6 +480,12 @@ router.put("/api/admin/products/:id", requireAuth, async (req, res) => {
   const idx = products.findIndex((x) => x.id === req.params.id);
   if (idx === -1) return json(res, 404, { error: "Produto não encontrado." });
   const p = req.body || {};
+  const previousCost = products[idx].cost;
+  const newCost = p.cost !== undefined ? (p.cost !== null && p.cost !== "" ? Number(p.cost) : null) : previousCost;
+  const costHistory = Array.isArray(products[idx].costHistory) ? products[idx].costHistory : [];
+  if (newCost !== null && newCost !== previousCost) {
+    costHistory.push({ date: new Date().toISOString(), cost: newCost });
+  }
   products[idx] = {
     ...products[idx],
     name: p.name !== undefined ? String(p.name).trim() : products[idx].name,
@@ -464,7 +495,8 @@ router.put("/api/admin/products/:id", requireAuth, async (req, res) => {
     images: p.images !== undefined ? sanitizeProductImages(p.images) : (products[idx].images || []),
     video: p.video !== undefined ? String(p.video).trim() : (products[idx].video || ""),
     price: p.price !== undefined ? Number(p.price) : products[idx].price,
-    cost: p.cost !== undefined ? (p.cost !== null && p.cost !== "" ? Number(p.cost) : null) : products[idx].cost,
+    cost: newCost,
+    costHistory: costHistory.slice(-20), // guarda só as últimas 20 mudanças
     promoPrice: p.promoPrice !== undefined ? (p.promoPrice ? Number(p.promoPrice) : null) : products[idx].promoPrice,
     category: p.category !== undefined ? (p.category === "dropship" ? "dropship" : "proprio") : products[idx].category,
     categoryId: p.categoryId !== undefined ? (p.categoryId ? String(p.categoryId) : null) : products[idx].categoryId,
@@ -482,6 +514,7 @@ router.put("/api/admin/products/:id", requireAuth, async (req, res) => {
     minStock: p.minStock !== undefined ? (p.minStock !== null && p.minStock !== "" ? Math.max(0, parseInt(p.minStock, 10) || 0) : null) : (products[idx].minStock !== undefined ? products[idx].minStock : null)
   };
   await store.writeJSON("products.json", products);
+  await logAction("produto", `Produto "${products[idx].name}" editado`);
   json(res, 200, products[idx]);
 });
 
@@ -500,10 +533,11 @@ router.get("/api/admin/products/by-code/:code", requireAuth, async (req, res) =>
 
 router.delete("/api/admin/products/:id", requireAuth, async (req, res) => {
   let products = await store.readJSON("products.json", DEFAULT_PRODUCTS);
-  const exists = products.some((x) => x.id === req.params.id);
-  if (!exists) return json(res, 404, { error: "Produto não encontrado." });
+  const target = products.find((x) => x.id === req.params.id);
+  if (!target) return json(res, 404, { error: "Produto não encontrado." });
   products = products.filter((x) => x.id !== req.params.id);
   await store.writeJSON("products.json", products);
+  await logAction("produto", `Produto "${target.name}" excluído`);
   json(res, 200, { deleted: true });
 });
 
@@ -585,8 +619,12 @@ router.post("/api/admin/stock-entries", requireAuth, async (req, res) => {
         ncm: String(np.ncm || "").trim(),
         cst: String(np.cst || "").trim(),
         minStock: null,
-        stock: 0
+        stock: 0,
+        costHistory: []
       };
+      if (product.cost !== null && product.cost !== undefined) {
+        product.costHistory.push({ date: new Date().toISOString(), cost: product.cost });
+      }
       if (!product.name) continue;
       products.push(product);
       productsChanged = true;
@@ -598,6 +636,21 @@ router.post("/api/admin/stock-entries", requireAuth, async (req, res) => {
       if (product && (item.ncm || item.cst)) {
         if (!product.ncm && item.ncm) { product.ncm = String(item.ncm).trim(); productsChanged = true; }
         if (!product.cst && item.cst) { product.cst = String(item.cst).trim(); productsChanged = true; }
+      }
+      // Entrada de mercadoria com custo unitário informado atualiza o custo
+      // do produto (é o dado de aquisição mais recente e mais confiável) e
+      // registra no histórico, pra dar pra acompanhar a variação de preço
+      // pago ao fornecedor ao longo do tempo.
+      const entryType = item.type === "saida" ? "saida" : item.type === "ajuste" ? "ajuste" : "entrada";
+      if (product && entryType === "entrada" && item.unitCost != null && item.unitCost !== "") {
+        const newCost = Number(item.unitCost);
+        if (newCost !== product.cost) {
+          product.cost = newCost;
+          const history = Array.isArray(product.costHistory) ? product.costHistory : [];
+          history.push({ date: new Date().toISOString(), cost: newCost });
+          product.costHistory = history.slice(-20);
+          productsChanged = true;
+        }
       }
     }
     if (!product) continue;
@@ -653,12 +706,19 @@ router.post("/api/admin/stock-entries", requireAuth, async (req, res) => {
   };
   entries.unshift(entry); // mais recente primeiro
   await store.writeJSON("stock_entries.json", entries.slice(0, 500)); // limite razoável de histórico
+  await logAction("estoque", `${entry.source === "manual" ? "Lançamento manual" : "Entrada por NF-e" + (entry.nfeNumber ? " nº " + entry.nfeNumber : "")} — ${appliedItems.length} item(ns) afetado(s)`);
   json(res, 201, stockWarning ? { ...entry, stockWarning } : entry);
 });
 
 router.get("/api/admin/stock-entries", requireAuth, async (req, res) => {
   const entries = await store.readJSON("stock_entries.json", []);
   json(res, 200, entries);
+});
+
+// ---- Log de atividades do admin ----
+router.get("/api/admin/action-log", requireAuth, async (req, res) => {
+  const log = await store.readJSON("action_log.json", []);
+  json(res, 200, log);
 });
 
 // ---- Categorias (setores/seções de produtos, criadas livremente pelo admin) ----
@@ -682,6 +742,7 @@ router.post("/api/admin/categories", requireAuth, async (req, res) => {
   const category = { id: "cat_" + crypto.randomBytes(6).toString("hex"), name };
   categories.push(category);
   await store.writeJSON("categories.json", categories);
+  await logAction("categoria", `Categoria "${category.name}" criada`);
   json(res, 201, category);
 });
 
@@ -694,15 +755,17 @@ router.put("/api/admin/categories/:id", requireAuth, async (req, res) => {
   if (categories.some((c) => c.id !== req.params.id && c.name.toLowerCase() === name.toLowerCase())) {
     return json(res, 400, { error: "Já existe uma categoria com esse nome." });
   }
+  const previousName = categories[idx].name;
   categories[idx].name = name;
   await store.writeJSON("categories.json", categories);
+  await logAction("categoria", `Categoria "${previousName}" renomeada para "${name}"`);
   json(res, 200, categories[idx]);
 });
 
 router.delete("/api/admin/categories/:id", requireAuth, async (req, res) => {
   let categories = await store.readJSON("categories.json", []);
-  const exists = categories.some((c) => c.id === req.params.id);
-  if (!exists) return json(res, 404, { error: "Categoria não encontrada." });
+  const target = categories.find((c) => c.id === req.params.id);
+  if (!target) return json(res, 404, { error: "Categoria não encontrada." });
   categories = categories.filter((c) => c.id !== req.params.id);
   await store.writeJSON("categories.json", categories);
   // Produtos que usavam essa categoria ficam "sem categoria" — nunca sobra uma
@@ -713,6 +776,7 @@ router.delete("/api/admin/categories/:id", requireAuth, async (req, res) => {
     if (p.categoryId === req.params.id) { p.categoryId = null; changed = true; }
   });
   if (changed) await store.writeJSON("products.json", products);
+  await logAction("categoria", `Categoria "${target.name}" excluída`);
   json(res, 200, { deleted: true });
 });
 
@@ -867,6 +931,7 @@ router.post("/api/admin/banners", requireAuth, async (req, res) => {
   };
   banners.push(banner);
   await store.writeJSON("banners.json", banners);
+  await logAction("banner", `Banner "${banner.title || banner.id}" criado`);
   json(res, 201, banner);
 });
 
@@ -898,15 +963,17 @@ router.put("/api/admin/banners/:id", requireAuth, async (req, res) => {
     active: b.active !== undefined ? Boolean(b.active) : banners[idx].active
   };
   await store.writeJSON("banners.json", banners);
+  await logAction("banner", `Banner "${banners[idx].title || banners[idx].id}" editado`);
   json(res, 200, banners[idx]);
 });
 
 router.delete("/api/admin/banners/:id", requireAuth, async (req, res) => {
   let banners = await store.readJSON("banners.json", []);
-  const exists = banners.some((x) => x.id === req.params.id);
-  if (!exists) return json(res, 404, { error: "Banner não encontrado." });
+  const target = banners.find((x) => x.id === req.params.id);
+  if (!target) return json(res, 404, { error: "Banner não encontrado." });
   banners = banners.filter((x) => x.id !== req.params.id);
   await store.writeJSON("banners.json", banners);
+  await logAction("banner", `Banner "${target.title || target.id}" excluído`);
   json(res, 200, { deleted: true });
 });
 
@@ -932,15 +999,17 @@ router.post("/api/admin/expenses", requireAuth, async (req, res) => {
   };
   expenses.push(expense);
   await store.writeJSON("expenses.json", expenses);
+  await logAction("despesa", `Despesa "${expense.description}" (${expense.amount.toFixed(2)}) lançada`);
   json(res, 201, expense);
 });
 
 router.delete("/api/admin/expenses/:id", requireAuth, async (req, res) => {
   let expenses = await store.readJSON("expenses.json", []);
-  const exists = expenses.some((x) => x.id === req.params.id);
-  if (!exists) return json(res, 404, { error: "Despesa não encontrada." });
+  const target = expenses.find((x) => x.id === req.params.id);
+  if (!target) return json(res, 404, { error: "Despesa não encontrada." });
   expenses = expenses.filter((x) => x.id !== req.params.id);
   await store.writeJSON("expenses.json", expenses);
+  await logAction("despesa", `Despesa "${target.description}" excluída`);
   json(res, 200, { deleted: true });
 });
 
@@ -1153,6 +1222,35 @@ router.get("/api/customers/orders", requireCustomerAuth, async (req, res) => {
     .filter((o) => o.customerId === req.customerId)
     .sort((a, b) => new Date(b.date) - new Date(a.date));
   json(res, 200, mine);
+});
+
+// ---- Lista de desejos (favoritos) ----
+router.get("/api/customers/wishlist", requireCustomerAuth, async (req, res) => {
+  const customers = await store.readJSON("customers.json", []);
+  const customer = customers.find((c) => c.id === req.customerId);
+  if (!customer) return json(res, 404, { error: "Conta não encontrada." });
+  json(res, 200, Array.isArray(customer.wishlist) ? customer.wishlist : []);
+});
+
+router.post("/api/customers/wishlist/:productId", requireCustomerAuth, async (req, res) => {
+  const customers = await store.readJSON("customers.json", []);
+  const idx = customers.findIndex((c) => c.id === req.customerId);
+  if (idx === -1) return json(res, 404, { error: "Conta não encontrada." });
+  const wishlist = Array.isArray(customers[idx].wishlist) ? customers[idx].wishlist : [];
+  if (!wishlist.includes(req.params.productId)) wishlist.push(req.params.productId);
+  customers[idx].wishlist = wishlist;
+  await store.writeJSON("customers.json", customers);
+  json(res, 200, wishlist);
+});
+
+router.delete("/api/customers/wishlist/:productId", requireCustomerAuth, async (req, res) => {
+  const customers = await store.readJSON("customers.json", []);
+  const idx = customers.findIndex((c) => c.id === req.customerId);
+  if (idx === -1) return json(res, 404, { error: "Conta não encontrada." });
+  const wishlist = (Array.isArray(customers[idx].wishlist) ? customers[idx].wishlist : []).filter((id) => id !== req.params.productId);
+  customers[idx].wishlist = wishlist;
+  await store.writeJSON("customers.json", customers);
+  json(res, 200, wishlist);
 });
 
 // ---- Pedidos ----
@@ -1418,7 +1516,9 @@ router.get("/api/orders/:id", async (req, res) => {
     status: order.status,
     total: order.total,
     items: order.items,
-    date: order.date
+    date: order.date,
+    trackingCode: order.trackingCode || "",
+    trackingUrl: order.trackingUrl || ""
   });
 });
 
@@ -1430,8 +1530,15 @@ router.put("/api/admin/orders/:id/status", requireAuth, async (req, res) => {
   if (!allowed.includes(req.body.status)) return json(res, 400, { error: "Status inválido." });
   const wasConfirmed = ["confirmado", "enviado", "entregue"].includes(order.status);
   const wasCancelled = order.status === "cancelado";
+  const previousStatus = order.status;
   order.status = req.body.status;
+
+  // Rastreamento: opcional, geralmente preenchido junto com o status "enviado".
+  if (req.body.trackingCode !== undefined) order.trackingCode = String(req.body.trackingCode).trim();
+  if (req.body.trackingUrl !== undefined) order.trackingUrl = String(req.body.trackingUrl).trim();
+
   await store.writeJSON("orders.json", orders);
+  await logAction("pedido", `Pedido #${order.id.slice(-6)} alterado de "${previousStatus}" para "${order.status}"${order.trackingCode ? ` — rastreio: ${order.trackingCode}` : ""}`);
 
   // Se o pedido está sendo cancelado agora (e ainda não tinha sido antes),
   // devolve pro estoque os itens que tinham controle ativado — evita

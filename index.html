@@ -69,6 +69,7 @@
   .icon-btn:hover{ border-color:var(--blue-soft); }
   .icon-btn:active{ transform:scale(0.94); }
   .badge-count{ position:absolute; top:-7px; right:-7px; background:var(--violet); color:#fff; font-size:0.68rem; font-weight:700; min-width:18px; height:18px; border-radius:9px; display:grid; place-items:center; padding:0 4px; border:2px solid var(--bg); }
+  .icon-btn.active{ border-color:#ff8f8f; color:#ff8f8f; }
 
   /* ===== Hero ===== */
   .hero{ padding:96px 0 60px; }
@@ -93,6 +94,9 @@
   .card:hover{ transform:translateY(-6px); border-color:rgba(125,211,252,0.35); box-shadow:0 20px 40px -20px rgba(77,163,255,0.35); }
   .card-tag{ position:absolute; top:18px; right:18px; font-size:0.68rem; font-weight:700; padding:4px 10px; border-radius:999px; background:rgba(34,211,166,0.12); color:var(--success); border:1px solid rgba(34,211,166,0.3); z-index:2; }
   .card-tag.hot{ background:rgba(255,107,107,0.12); color:#ff8f8f; border-color:rgba(255,107,107,0.3); }
+  .wishlist-btn{ position:absolute; top:16px; left:16px; z-index:3; width:34px; height:34px; border-radius:50%; border:1px solid var(--card-border); background:rgba(5,7,13,0.7); backdrop-filter:blur(4px); display:grid; place-items:center; cursor:pointer; color:var(--muted); transition:color .2s, border-color .2s, transform .15s; }
+  .wishlist-btn:hover{ transform:scale(1.08); color:#ff8f8f; }
+  .wishlist-btn.active{ color:#ff8f8f; border-color:rgba(255,143,143,0.4); }
   .product-art{ border-radius:10px; margin-bottom:20px; background:#0d1326; display:grid; place-items:center; border:1px solid var(--line); overflow:hidden; padding:10px; }
   .product-art img{ width:100%; height:auto; max-height:380px; object-fit:contain; }
   .product-art .fallback{ color:var(--muted); font-size:0.8rem; text-align:center; padding:10px; }
@@ -415,6 +419,10 @@
     </nav>
     <div class="nav-right">
       <a class="btn btn-outline" href="https://wa.me/5568992186548" target="_blank" rel="noopener">Fale conosco</a>
+      <div class="icon-btn" id="wishlistBtn" title="Favoritos" onclick="toggleWishlistFilter()">
+        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.6l-1-1a5.5 5.5 0 0 0-7.8 7.8l1 1L12 21l7.8-7.8 1-1a5.5 5.5 0 0 0 0-7.8z"/></svg>
+        <span class="badge-count" id="wishlistCount" style="display:none">0</span>
+      </div>
       <div class="icon-btn" id="accountBtn" title="Minha conta">
         <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
       </div>
@@ -745,6 +753,7 @@
         <button data-panel="pedidos" onclick="switchAdminPanel('pedidos')">Vendas / Pedidos</button>
         <button data-panel="relatorios" onclick="switchAdminPanel('relatorios')">Relatórios / DRE</button>
         <button data-panel="clientes" onclick="switchAdminPanel('clientes')">Clientes</button>
+        <button data-panel="atividade" onclick="switchAdminPanel('atividade')">Atividade</button>
       </nav>
       <a onclick="goStorefront()" class="btn btn-outline btn-sm" style="margin-bottom:8px; cursor:pointer; text-align:center;">Ver loja</a>
       <button onclick="logoutAdmin()" class="btn btn-danger btn-sm">Sair</button>
@@ -755,9 +764,13 @@
       <section class="admin-panel active" id="panel-dashboard">
         <div class="admin-topbar">
           <h2>Painel geral</h2>
-          <select id="dashboardPeriod" onchange="renderDashboard()" style="width:auto; padding:9px 14px; border-radius:9px; border:1px solid var(--card-border); background:var(--card); color:var(--text);"></select>
+          <div style="display:flex; gap:10px; align-items:center;">
+            <button type="button" class="btn btn-outline btn-sm" id="notifyToggleBtn" onclick="requestOrderNotificationPermission()">🔕 Ativar notificação de pedido novo</button>
+            <select id="dashboardPeriod" onchange="renderDashboard()" style="width:auto; padding:9px 14px; border-radius:9px; border:1px solid var(--card-border); background:var(--card); color:var(--text);"></select>
+          </div>
         </div>
         <div class="stat-grid" id="statGrid"></div>
+        <div id="lowStockAlert" style="display:none"></div>
         <div class="section-head" style="margin-bottom:16px;"><div><h2 style="font-size:1.1rem;">Últimos pedidos</h2></div></div>
         <div id="dashboardOrders"></div>
       </section>
@@ -904,12 +917,17 @@
       <section class="admin-panel" id="panel-relatorios">
         <div class="admin-topbar">
           <h2>Relatórios / DRE</h2>
-          <select id="reportPeriod" onchange="renderReports()" style="width:auto; padding:9px 14px; border-radius:9px; border:1px solid var(--card-border); background:var(--card); color:var(--text);">
-            <option value="7">Últimos 7 dias</option>
-            <option value="30" selected>Últimos 30 dias</option>
-            <option value="90">Últimos 90 dias</option>
-            <option value="all">Desde o início</option>
-          </select>
+          <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+            <button type="button" class="btn btn-outline btn-sm" onclick="exportOrdersCsv()">Exportar pedidos (CSV)</button>
+            <button type="button" class="btn btn-outline btn-sm" onclick="exportProductsCsv()">Exportar produtos (CSV)</button>
+            <button type="button" class="btn btn-outline btn-sm" onclick="exportCustomersCsv()">Exportar clientes (CSV)</button>
+            <select id="reportPeriod" onchange="renderReports()" style="width:auto; padding:9px 14px; border-radius:9px; border:1px solid var(--card-border); background:var(--card); color:var(--text);">
+              <option value="7">Últimos 7 dias</option>
+              <option value="30" selected>Últimos 30 dias</option>
+              <option value="90">Últimos 90 dias</option>
+              <option value="all">Desde o início</option>
+            </select>
+          </div>
         </div>
 
         <div class="stat-grid" id="reportStatGrid"></div>
@@ -927,6 +945,10 @@
             <div id="reportByCategory"></div>
           </div>
         </div>
+
+        <div class="section-head" style="margin:30px 0 14px;"><div><h2 style="font-size:1.05rem;">Giro de estoque</h2></div></div>
+        <p class="field-hint" style="margin-top:-8px; margin-bottom:14px;">Quanto foi vendido de cada produto no período selecionado acima, comparado ao estoque atual — ajuda a ver o que repor e o que está parado.</p>
+        <div id="reportStockTurnover"></div>
 
         <div class="section-head" style="margin:30px 0 14px;"><div><h2 style="font-size:1.05rem;">DRE simplificado — período selecionado</h2></div></div>
         <div id="reportDRE" class="dre-table"></div>
@@ -946,6 +968,16 @@
       <section class="admin-panel" id="panel-clientes">
         <div class="admin-topbar"><h2>Clientes</h2></div>
         <div id="adminCustomersTable"></div>
+      </section>
+
+      <section class="admin-panel" id="panel-atividade">
+        <div class="admin-topbar"><h2>Atividade</h2></div>
+        <p class="field-hint" style="margin-bottom:18px; max-width:680px;">
+          Histórico das principais ações feitas no painel — produtos, categorias, banners,
+          despesas, pedidos e estoque. Serve de auditoria e ajuda a lembrar o que foi alterado
+          e quando.
+        </p>
+        <div id="actionLogTable"></div>
       </section>
     </main>
   </div>
@@ -999,6 +1031,7 @@
       </div>
       <div class="field"><label>Custo do produto (opcional)</label><input type="number" step="0.01" min="0" id="pfCost" placeholder="Quanto você paga pelo produto">
         <p class="field-hint">Usado só pra calcular a margem nos Relatórios. Se não preencher, o produto entra na receita mas não no cálculo de lucro.</p>
+        <p class="field-hint" id="pfCostHistory" style="display:none"></p>
       </div>
       <div class="field"><label>Estoque (opcional)</label><input type="number" step="1" min="0" id="pfStock" placeholder="Deixe em branco = sem controle de estoque">
         <p class="field-hint">Preenchendo, o site passa a descontar automaticamente a cada venda e bloqueia o pedido se acabar. Pra ajustar depois, edite aqui ou dê entrada por nota fiscal ou lançamento manual na aba Estoque. Deixe em branco pra produtos sem limite (ex: dropshipping).</p>
@@ -1197,6 +1230,8 @@ const CUSTOMER_TOKEN_STORAGE_KEY = "reitech_customer_token_v1";
 
 let customerToken = null;
 let currentCustomer = null; // {id, name, email, phone, address}
+let wishlist = []; // ids de produtos favoritados pelo cliente logado
+let wishlistOnlyFilter = false; // quando true, a vitrine mostra só os favoritos
 
 function saveCustomerTokenToStorage(token){
   try{ localStorage.setItem(CUSTOMER_TOKEN_STORAGE_KEY, token); }catch(e){ /* ignore */ }
@@ -1244,7 +1279,7 @@ const LOGO_MARK_SRC = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAARkAAAEsCAY
 
 function uid(prefix){ return prefix + "_" + Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
 
-function money(v){ return "R$" + Number(v).toFixed(2).replace(".", ","); }
+function money(v){ return "R$" + Number(v || 0).toFixed(2).replace(".", ","); }
 
 async function api(path, { method = "GET", body, auth = false, customerAuth = false } = {}){
   const headers = { "Content-Type": "application/json" };
@@ -1321,6 +1356,81 @@ async function loadOrders(){
     orders = [];
     showToast(e.message);
   }
+}
+
+/* ---- Notificação de pedido novo (enquanto o painel estiver aberto) ---- */
+let newOrderWatcherTimer = null;
+let knownOrderIds = new Set();
+const NEW_ORDER_POLL_MS = 30000; // 30s — leve o bastante pra não pesar no servidor
+
+function initKnownOrderIds(){
+  knownOrderIds = new Set(orders.map(o => o.id));
+}
+
+async function requestOrderNotificationPermission(){
+  if(!('Notification' in window)){ showToast("Seu navegador não suporta notificações."); return; }
+  const perm = await Notification.requestPermission();
+  updateNotificationToggleUI();
+  if(perm === 'granted') showToast("Notificações de pedido novo ativadas.");
+  else if(perm === 'denied') showToast("Notificações bloqueadas — ative nas permissões do site, no navegador.");
+}
+
+function updateNotificationToggleUI(){
+  const btn = document.getElementById('notifyToggleBtn');
+  if(!btn || !('Notification' in window)) return;
+  const granted = Notification.permission === 'granted';
+  btn.textContent = granted ? '🔔 Notificações ativadas' : '🔕 Ativar notificação de pedido novo';
+  btn.classList.toggle('btn-solid', granted);
+  btn.classList.toggle('btn-outline', !granted);
+}
+
+function playNewOrderSound(){
+  try{
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    [880, 1175].forEach((freq, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine'; osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.2, ctx.currentTime + i * 0.18);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + i * 0.18 + 0.35);
+      osc.connect(gain); gain.connect(ctx.destination);
+      osc.start(ctx.currentTime + i * 0.18);
+      osc.stop(ctx.currentTime + i * 0.18 + 0.35);
+    });
+  }catch(e){ /* navegador sem suporte a áudio — sem problema, a notificação visual continua */ }
+}
+
+async function checkForNewOrders(){
+  let fresh;
+  try{
+    fresh = await api("/api/admin/orders", { auth: true });
+  }catch(e){ return; }
+  const newOnes = fresh.filter(o => !knownOrderIds.has(o.id));
+  orders = fresh;
+  if(newOnes.length > 0){
+    knownOrderIds = new Set(fresh.map(o => o.id));
+    playNewOrderSound();
+    if('Notification' in window && Notification.permission === 'granted'){
+      const o = newOnes[0];
+      new Notification(newOnes.length === 1 ? "Novo pedido recebido!" : `${newOnes.length} novos pedidos recebidos!`, {
+        body: `${escapeHtml(o.customer.name)} — ${money(o.total)}`,
+        icon: '/favicon.ico'
+      });
+    }
+    showToast(newOnes.length === 1 ? "Novo pedido recebido!" : `${newOnes.length} novos pedidos recebidos!`);
+    renderDashboard();
+    renderAdminOrders();
+  }
+}
+
+function startNewOrderWatcher(){
+  initKnownOrderIds();
+  updateNotificationToggleUI();
+  if(newOrderWatcherTimer) clearInterval(newOrderWatcherTimer);
+  newOrderWatcherTimer = setInterval(checkForNewOrders, NEW_ORDER_POLL_MS);
+}
+function stopNewOrderWatcher(){
+  if(newOrderWatcherTimer){ clearInterval(newOrderWatcherTimer); newOrderWatcherTimer = null; }
 }
 
 /* ============================================================
@@ -1428,11 +1538,64 @@ function handleSearchInput(value){
   searchQuery = value.trim().toLowerCase();
   renderStorefrontProducts();
 }
+/* ---- Lista de desejos (favoritos) ---- */
+async function loadWishlist(){
+  if(!customerToken){ wishlist = []; return; }
+  try{
+    wishlist = await api("/api/customers/wishlist", { customerAuth: true });
+  }catch(e){
+    wishlist = [];
+  }
+  updateWishlistCountUI();
+}
+
+function updateWishlistCountUI(){
+  const el = document.getElementById('wishlistCount');
+  if(!el) return;
+  el.textContent = wishlist.length;
+  el.style.display = wishlist.length > 0 ? 'flex' : 'none';
+}
+
+async function toggleWishlist(productId){
+  if(!customerToken){
+    showToast("Entre na sua conta para favoritar produtos.");
+    openAuthModal();
+    return;
+  }
+  const isFav = wishlist.includes(productId);
+  try{
+    if(isFav){
+      wishlist = await api("/api/customers/wishlist/" + productId, { method: "DELETE", customerAuth: true });
+    }else{
+      wishlist = await api("/api/customers/wishlist/" + productId, { method: "POST", customerAuth: true });
+    }
+    updateWishlistCountUI();
+    renderStorefrontProducts();
+  }catch(err){
+    showToast(err.message);
+  }
+}
+
+function toggleWishlistFilter(){
+  if(!customerToken){
+    showToast("Entre na sua conta para ver seus favoritos.");
+    openAuthModal();
+    return;
+  }
+  wishlistOnlyFilter = !wishlistOnlyFilter;
+  document.getElementById('wishlistBtn').classList.toggle('active', wishlistOnlyFilter);
+  document.getElementById('produtos').scrollIntoView({ behavior: 'smooth' });
+  renderStorefrontProducts();
+}
+
 function renderStorefrontProducts(){
   const grid = document.getElementById('productGrid');
   let visible = products.filter(p => p.active !== false);
   if(activeCategoryFilter){
     visible = visible.filter(p => p.categoryId === activeCategoryFilter);
+  }
+  if(wishlistOnlyFilter){
+    visible = visible.filter(p => wishlist.includes(p.id));
   }
   if(searchQuery){
     visible = visible.filter(p =>
@@ -1441,7 +1604,7 @@ function renderStorefrontProducts(){
     );
   }
   if(visible.length === 0){
-    grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1">Nenhum produto encontrado${searchQuery ? ` para "${escapeHtml(searchQuery)}"` : ''}.</div>`;
+    grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1">${wishlistOnlyFilter ? 'Você ainda não favoritou nenhum produto.' : `Nenhum produto encontrado${searchQuery ? ` para "${escapeHtml(searchQuery)}"` : ''}.`}</div>`;
     return;
   }
   grid.innerHTML = visible.map(p => {
@@ -1451,6 +1614,9 @@ function renderStorefrontProducts(){
     return `
     <article class="card reveal in" data-id="${p.id}">
       ${p.badge ? `<span class="card-tag${hasPromo ? ' hot' : ''}">${escapeHtml(p.badge)}</span>` : (hasPromo ? `<span class="card-tag hot">Promoção</span>` : '')}
+      <button class="wishlist-btn${wishlist.includes(p.id) ? ' active' : ''}" onclick="event.stopPropagation(); toggleWishlist('${p.id}')" title="${wishlist.includes(p.id) ? 'Remover dos favoritos' : 'Adicionar aos favoritos'}" aria-label="Favoritar">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="${wishlist.includes(p.id) ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.6l-1-1a5.5 5.5 0 0 0-7.8 7.8l1 1L12 21l7.8-7.8 1-1a5.5 5.5 0 0 0 0-7.8z"/></svg>
+      </button>
       <div class="product-art" onclick="openProductDetail('${p.id}')" style="cursor:pointer">${productArtHtml(p)}</div>
       <h3 class="clickable-title" onclick="openProductDetail('${p.id}')">${escapeHtml(p.name)}</h3>
       <p class="desc">${escapeHtml(p.description || '')}</p>
@@ -1590,6 +1756,7 @@ async function loadCustomerSession(){
   customerToken = token;
   try{
     currentCustomer = await api("/api/customers/me", { customerAuth: true });
+    await loadWishlist();
   }catch(e){
     // Token inválido/expirado — limpa silenciosamente, sem incomodar o cliente.
     customerToken = null;
@@ -1633,6 +1800,7 @@ async function submitCustomerLogin(e){
     customerToken = data.token;
     currentCustomer = data.customer;
     saveCustomerTokenToStorage(customerToken);
+    await loadWishlist();
     updateAccountButtonUI();
     closeAuthModal();
     document.getElementById('loginForm').reset();
@@ -1745,6 +1913,7 @@ async function submitCustomerSignup(e){
     customerToken = data.token;
     currentCustomer = data.customer;
     saveCustomerTokenToStorage(customerToken);
+    await loadWishlist();
     updateAccountButtonUI();
     closeAuthModal();
     document.getElementById('signupForm').reset();
@@ -1784,6 +1953,7 @@ async function handleGoogleCredential(response){
     customerToken = data.token;
     currentCustomer = data.customer;
     saveCustomerTokenToStorage(customerToken);
+    await loadWishlist();
     updateAccountButtonUI();
     closeAuthModal();
     showToast("Bem-vindo(a), " + currentCustomer.name + "!");
@@ -1797,10 +1967,13 @@ async function handleGoogleCredential(response){
 function customerLogout(showMsg){
   customerToken = null;
   currentCustomer = null;
+  wishlist = [];
+  wishlistOnlyFilter = false;
   clearCustomerTokenStorage();
   updateAccountButtonUI();
   closeAccountModal();
   applyLoggedCustomerToCheckout();
+  renderStorefrontProducts();
   if(showMsg !== false) showToast("Você saiu da sua conta.");
 }
 
@@ -1866,6 +2039,12 @@ async function renderAccountOrders(){
       </div>
       <div class="items">${o.items.map(i => `${i.qty}x ${escapeHtml(i.name)}${i.color ? ' (' + escapeHtml(i.color) + ')' : ''}`).join(', ')}</div>
       <div class="items" style="margin-top:4px">${formatDate(o.date)} · Pedido #${o.id}</div>
+      ${o.trackingCode ? `
+        <div class="items" style="margin-top:8px; padding-top:8px; border-top:1px solid var(--card-border);">
+          <strong style="color:var(--text)">Rastreio:</strong> ${escapeHtml(o.trackingCode)}
+          ${o.trackingUrl ? `<a href="${escapeAttr(o.trackingUrl)}" target="_blank" rel="noopener" style="color:var(--blue-soft); margin-left:8px;">Acompanhar entrega →</a>` : ''}
+        </div>
+      ` : ''}
     </div>
   `).join('');
 }
@@ -2244,15 +2423,17 @@ function goStorefront(){
   window.location.hash = '';
   document.getElementById('adminView').classList.remove('show');
   document.getElementById('storefrontView').classList.remove('hide');
+  stopNewOrderWatcher();
 }
 function showAdminLogin(){
   document.getElementById('adminLoginScreen').style.display = 'grid';
   document.getElementById('adminShell').style.display = 'none';
 }
-function showAdminShell(){
+async function showAdminShell(){
   document.getElementById('adminLoginScreen').style.display = 'none';
   document.getElementById('adminShell').style.display = 'grid';
-  renderAllAdminPanels();
+  await renderAllAdminPanels();
+  startNewOrderWatcher();
 }
 async function tryLogin(e){
   e.preventDefault();
@@ -2281,6 +2462,7 @@ function logoutAdmin(){
 function switchAdminPanel(name){
   document.querySelectorAll('.admin-nav button').forEach(b => b.classList.toggle('active', b.dataset.panel === name));
   document.querySelectorAll('.admin-panel').forEach(p => p.classList.toggle('active', p.id === 'panel-' + name));
+  if(name === 'atividade'){ loadActionLog().then(renderActionLog); }
 }
 
 async function renderAllAdminPanels(){
@@ -2291,6 +2473,7 @@ async function renderAllAdminPanels(){
   await loadExpenses();
   await loadShippingRules();
   await loadStockEntries();
+  await loadActionLog();
   renderDashboard();
   renderAdminProducts();
   renderAdminOrders();
@@ -2301,6 +2484,7 @@ async function renderAllAdminPanels(){
   renderAdminShippingRules();
   renderReports();
   renderStockEntries();
+  renderActionLog();
 }
 
 /* ---- Estoque: entrada por nota fiscal (NF-e) ---- */
@@ -2314,6 +2498,29 @@ async function loadStockEntries(){
   }catch(err){
     stockEntries = [];
   }
+}
+
+/* ---- Log de atividades do admin ---- */
+let actionLog = [];
+async function loadActionLog(){
+  try{
+    actionLog = await api("/api/admin/action-log", { auth: true });
+  }catch(err){
+    actionLog = [];
+  }
+}
+const ACTION_TYPE_LABEL = { produto: 'Produto', categoria: 'Categoria', banner: 'Banner', despesa: 'Despesa', pedido: 'Pedido', estoque: 'Estoque' };
+function renderActionLog(){
+  const box = document.getElementById('actionLogTable');
+  if(!box) return;
+  if(actionLog.length === 0){ box.innerHTML = `<div class="empty-admin">Nenhuma atividade registrada ainda.</div>`; return; }
+  box.innerHTML = `<table><thead><tr><th>Data</th><th>Tipo</th><th>Descrição</th></tr></thead><tbody>
+    ${actionLog.map(l => `<tr>
+      <td>${formatDate(l.date)}</td>
+      <td><span class="status-pill status-confirmado">${ACTION_TYPE_LABEL[l.type] || l.type}</span></td>
+      <td>${escapeHtml(l.description)}</td>
+    </tr>`).join('')}
+  </tbody></table>`;
 }
 
 function handleNfeFileSelected(event){
@@ -2338,8 +2545,6 @@ function handleNfeFileSelected(event){
   reader.onerror = () => { statusEl.textContent = ""; showToast("Não foi possível ler o arquivo."); };
   reader.readAsText(file);
 }
-
-function money(v){ return "R$" + Number(v || 0).toFixed(2).replace(".", ","); }
 
 // Primeiro passo depois de ler o XML: mostra só o resumo da nota (sem os
 // itens ainda) pra o admin conferir que é a nota certa antes de partir pro
@@ -2991,6 +3196,29 @@ function renderDashboard(){
     <div class="stat-card"><span>Ticket médio</span><b>${money(avgTicket)}</b></div>
     <div class="stat-card"><span>Produtos ativos</span><b>${products.filter(p=>p.active!==false).length}</b></div>
   `;
+
+  // Alerta de estoque baixo: produtos com controle de estoque ativado e
+  // abaixo do limite mínimo (o do produto, ou 5 unidades por padrão).
+  const lowStockBox = document.getElementById('lowStockAlert');
+  const lowStock = products.filter(p => {
+    if(p.stock === null || p.stock === undefined) return false;
+    const threshold = (p.minStock !== null && p.minStock !== undefined) ? p.minStock : 5;
+    return p.stock <= threshold;
+  }).sort((a,b) => a.stock - b.stock);
+  if(lowStock.length > 0){
+    lowStockBox.style.display = 'block';
+    lowStockBox.innerHTML = `
+      <div class="card" style="margin-bottom:24px; border-color:rgba(255,143,143,0.35);">
+        <h3 style="margin:0 0 10px; font-size:0.98rem; color:#ff8f8f;">⚠ ${lowStock.length} produto(s) com estoque baixo</h3>
+        <div style="display:flex; flex-wrap:wrap; gap:8px;">
+          ${lowStock.map(p => `<span class="status-pill ${p.stock <= 0 ? 'status-cancelado' : 'status-pendente'}" style="cursor:pointer" onclick="switchAdminPanel('produtos')">${escapeHtml(p.name)} — ${p.stock <= 0 ? 'esgotado' : p.stock + ' un.'}</span>`).join('')}
+        </div>
+      </div>`;
+  }else{
+    lowStockBox.style.display = 'none';
+    lowStockBox.innerHTML = '';
+  }
+
   const recentSource = selectedMonth === 'all' ? orders : orders.filter(o => orderMonthKey(o.date) === selectedMonth);
   const recent = [...recentSource].sort((a,b)=> new Date(b.date) - new Date(a.date)).slice(0,5);
   const box = document.getElementById('dashboardOrders');
@@ -3156,6 +3384,34 @@ function renderReports(){
         ${catList.map(([name, val]) => `<tr><td>${escapeHtml(name)}</td><td>${money(val)}</td></tr>`).join('')}
       </tbody></table>`;
 
+  // Giro de estoque: cruza o que foi vendido no período (byProduct, já
+  // calculado acima) com o estoque atual de cada produto controlado.
+  // Ajuda a ver o que precisa repor logo e o que está parado.
+  const turnoverBox = document.getElementById('reportStockTurnover');
+  if(turnoverBox){
+    const tracked = products.filter(p => p.stock !== null && p.stock !== undefined);
+    if(tracked.length === 0){
+      turnoverBox.innerHTML = `<div class="empty-admin">Nenhum produto com controle de estoque ativado ainda.</div>`;
+    }else{
+      const rows = tracked.map(p => {
+        const sold = byProduct[p.id] ? byProduct[p.id].qty : 0;
+        let classification, pillClass;
+        if(sold === 0){ classification = 'Parado'; pillClass = 'status-cancelado'; }
+        else if(sold >= p.stock){ classification = 'Alto giro'; pillClass = 'status-entregue'; }
+        else { classification = 'Giro normal'; pillClass = 'status-confirmado'; }
+        return { p, sold, classification, pillClass };
+      }).sort((a,b) => b.sold - a.sold);
+      turnoverBox.innerHTML = `<table><thead><tr><th>Produto</th><th>Vendido no período</th><th>Estoque atual</th><th>Situação</th></tr></thead><tbody>
+        ${rows.map(r => `<tr>
+          <td>${escapeHtml(r.p.name)}</td>
+          <td>${r.sold}</td>
+          <td>${r.p.stock}</td>
+          <td><span class="status-pill ${r.pillClass}">${r.classification}</span></td>
+        </tr>`).join('')}
+      </tbody></table>`;
+    }
+  }
+
   // DRE
   const dreBox = document.getElementById('reportDRE');
   dreBox.innerHTML = `
@@ -3166,6 +3422,68 @@ function renderReports(){
     <div class="dre-row dre-total ${lucroLiquido >= 0 ? 'dre-positive' : 'dre-negative'}"><span>(=) Lucro líquido</span><span>${money(lucroLiquido)} <small style="font-weight:400;color:var(--muted)">(${margemLiquida.toFixed(1)}%)</small></span></div>
     ${itemsSemCusto > 0 ? `<div class="dre-row" style="font-size:0.78rem;color:var(--muted)"><span colspan="2">⚠ ${itemsSemCusto} item(ns) vendido(s) sem custo cadastrado — CMV pode estar subestimado.</span></div>` : ''}
   `;
+}
+
+/* ---- Exportar CSV ---- */
+// Monta e baixa um CSV a partir de linhas já prontas (array de arrays).
+// Usa ponto-e-vírgula como separador (padrão do Excel em português) e BOM
+// UTF-8 no início, pra acentuação abrir certo sem configurar nada.
+function downloadCsv(filename, rows){
+  const escapeCsv = (val) => {
+    const s = String(val ?? '');
+    return /[;"\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  };
+  const content = rows.map(row => row.map(escapeCsv).join(';')).join('\r\n');
+  const blob = new Blob(['\uFEFF' + content], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function exportOrdersCsv(){
+  if(orders.length === 0){ showToast("Nenhum pedido para exportar."); return; }
+  const rows = [['Data', 'Cliente', 'Telefone', 'E-mail', 'Itens', 'Frete', 'Total', 'Pagamento', 'Status', 'Rastreio']];
+  orders.forEach(o => {
+    rows.push([
+      formatDate(o.date),
+      o.customer.name,
+      o.customer.phone,
+      o.customer.email || '',
+      o.items.map(i => `${i.qty}x ${i.name}`).join(' | '),
+      o.shippingCost || 0,
+      o.total,
+      paymentMethodLabel(o.paymentMethod),
+      statusLabel(o.status),
+      o.trackingCode || ''
+    ]);
+  });
+  downloadCsv('pedidos-reitech.csv', rows);
+}
+
+function exportProductsCsv(){
+  if(products.length === 0){ showToast("Nenhum produto para exportar."); return; }
+  const rows = [['Nome', 'Preço', 'Preço promocional', 'Custo', 'Estoque', 'Estoque mínimo', 'Código de barras', 'SKU', 'NCM', 'CST', 'Categoria', 'Ativo']];
+  products.forEach(p => {
+    const catName = p.categoryId ? (categories.find(c => c.id === p.categoryId)?.name || '') : '';
+    rows.push([
+      p.name, p.price, p.promoPrice || '', p.cost ?? '',
+      (p.stock === null || p.stock === undefined) ? 'sem controle' : p.stock,
+      p.minStock ?? '', p.barcode || '', p.sku || '', p.ncm || '', p.cst || '',
+      catName, p.active !== false ? 'sim' : 'não'
+    ]);
+  });
+  downloadCsv('produtos-reitech.csv', rows);
+}
+
+async function exportCustomersCsv(){
+  let list;
+  try{ list = await api("/api/admin/customers", { auth: true }); }catch(e){ list = []; }
+  if(list.length === 0){ showToast("Nenhum cliente para exportar."); return; }
+  const rows = [['Nome', 'Telefone', 'E-mail', 'Pedidos', 'Total gasto']];
+  list.forEach(c => rows.push([c.name, c.phone, c.email || '', c.orders, c.total]));
+  downloadCsv('clientes-reitech.csv', rows);
 }
 
 /* ---- Products admin ---- */
@@ -3230,6 +3548,14 @@ function openProductForm(id){
     document.getElementById('pfPrice').value = p.price;
     document.getElementById('pfPromoPrice').value = p.promoPrice || '';
     document.getElementById('pfCost').value = (p.cost !== null && p.cost !== undefined) ? p.cost : '';
+    const costHistoryEl = document.getElementById('pfCostHistory');
+    if(Array.isArray(p.costHistory) && p.costHistory.length > 0){
+      const recent = p.costHistory.slice(-5).reverse();
+      costHistoryEl.innerHTML = 'Histórico de custo: ' + recent.map(h => `${money(h.cost)} (${formatDate(h.date)})`).join(' · ');
+      costHistoryEl.style.display = 'block';
+    }else{
+      costHistoryEl.style.display = 'none';
+    }
     document.getElementById('pfStock').value = (p.stock !== null && p.stock !== undefined) ? p.stock : '';
     document.getElementById('pfBarcode').value = p.barcode || '';
     document.getElementById('pfSku').value = p.sku || '';
@@ -3253,6 +3579,7 @@ function openProductForm(id){
     document.getElementById('pfVideoPreview').style.display = 'none';
     document.getElementById('pfActive').value = 'true';
     document.getElementById('pfImagePreview').style.display = 'none';
+    document.getElementById('pfCostHistory').style.display = 'none';
     pfExtraImagesState = [];
     renderExtraImagesRows();
   }
@@ -3491,7 +3818,7 @@ function renderAdminOrders(){
   if(orders.length === 0){ box.innerHTML = `<div class="empty-admin">Nenhum pedido registrado ainda.</div>`; return; }
   if(filtered.length === 0){ box.innerHTML = `<div class="empty-admin">Nenhum pedido encontrado nesse período.</div>`; return; }
   const sorted = [...filtered].sort((a,b)=> new Date(b.date) - new Date(a.date));
-  box.innerHTML = `<table><thead><tr><th>Data</th><th>Cliente</th><th>Contato</th><th>Endereço de entrega</th><th>Frete</th><th>Itens</th><th>Total</th><th>Pagamento</th><th>Status</th></tr></thead><tbody>
+  box.innerHTML = `<table><thead><tr><th>Data</th><th>Cliente</th><th>Contato</th><th>Endereço de entrega</th><th>Frete</th><th>Itens</th><th>Total</th><th>Pagamento</th><th>Status</th><th>Rastreio</th></tr></thead><tbody>
     ${sorted.map(o => `<tr>
       <td>${formatDate(o.date)}${o.manual ? '<br><span style="font-size:0.72rem;color:var(--muted)">venda manual</span>' : ''}</td>
       <td>${escapeHtml(o.customer.name)}</td>
@@ -3506,6 +3833,10 @@ function renderAdminOrders(){
           ${['pendente','confirmado','enviado','entregue','cancelado','teste'].map(s => `<option value="${s}" ${o.status===s?'selected':''}>${statusLabel(s)}</option>`).join('')}
         </select>
       </td>
+      <td style="max-width:180px">
+        ${o.trackingCode ? `<div style="font-size:0.82rem">${escapeHtml(o.trackingCode)}</div>` : ''}
+        <button class="btn btn-outline btn-sm" onclick="editOrderTracking('${o.id}')">${o.trackingCode ? 'Editar' : '+ Rastreio'}</button>
+      </td>
     </tr>`).join('')}
   </tbody></table>`;
 }
@@ -3519,6 +3850,23 @@ async function updateOrderStatus(id, status){
     renderDashboard();
     renderAdminOrders();
     showToast("Status do pedido atualizado.");
+  }catch(err){
+    showToast(err.message);
+  }
+}
+
+async function editOrderTracking(id){
+  const order = orders.find(o => o.id === id);
+  if(!order) return;
+  const code = prompt("Código de rastreio (ex: BR123456789BR):", order.trackingCode || '');
+  if(code === null) return; // cancelou
+  const url = prompt("Link de rastreio (opcional — ex: dos Correios ou da transportadora):", order.trackingUrl || '');
+  if(url === null) return;
+  try{
+    await api(`/api/admin/orders/${id}/status`, { method: "PUT", body: { status: order.status, trackingCode: code.trim(), trackingUrl: url.trim() }, auth: true });
+    await loadOrders();
+    renderAdminOrders();
+    showToast("Rastreio atualizado — o cliente já consegue ver em 'Meus pedidos'.");
   }catch(err){
     showToast(err.message);
   }
