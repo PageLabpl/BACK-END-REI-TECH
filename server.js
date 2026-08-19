@@ -435,6 +435,12 @@ router.post("/api/admin/products", requireAuth, async (req, res) => {
     // Código/referência interna do lojista (SKU) — independente do código
     // de barras, útil pra quem organiza o estoque por referência própria.
     sku: String(p.sku || "").trim(),
+    // NCM (classificação fiscal) e CST/CSOSN (situação tributária) —
+    // preenchidos automaticamente ao ler uma NF-e que traga esses dados,
+    // mas também editáveis à mão. Não afetam preço nem cálculo nenhum no
+    // site; servem só de referência pro lojista/contador.
+    ncm: String(p.ncm || "").trim(),
+    cst: String(p.cst || "").trim(),
     // Estoque mínimo: abaixo desse número o produto aparece com alerta de
     // "estoque baixo" no admin. null = usa o padrão da tela (5 unidades).
     minStock: p.minStock !== undefined && p.minStock !== null && p.minStock !== "" ? Math.max(0, parseInt(p.minStock, 10) || 0) : null
@@ -471,6 +477,8 @@ router.put("/api/admin/products/:id", requireAuth, async (req, res) => {
     stock: p.stock !== undefined ? (p.stock !== null && p.stock !== "" ? Math.max(0, parseInt(p.stock, 10) || 0) : null) : products[idx].stock,
     barcode: p.barcode !== undefined ? String(p.barcode).trim() : (products[idx].barcode || ""),
     sku: p.sku !== undefined ? String(p.sku).trim() : (products[idx].sku || ""),
+    ncm: p.ncm !== undefined ? String(p.ncm).trim() : (products[idx].ncm || ""),
+    cst: p.cst !== undefined ? String(p.cst).trim() : (products[idx].cst || ""),
     minStock: p.minStock !== undefined ? (p.minStock !== null && p.minStock !== "" ? Math.max(0, parseInt(p.minStock, 10) || 0) : null) : (products[idx].minStock !== undefined ? products[idx].minStock : null)
   };
   await store.writeJSON("products.json", products);
@@ -574,6 +582,8 @@ router.post("/api/admin/stock-entries", requireAuth, async (req, res) => {
         length: null,
         barcode: String(np.barcode || "").trim(),
         sku: String(np.sku || "").trim(),
+        ncm: String(np.ncm || "").trim(),
+        cst: String(np.cst || "").trim(),
         minStock: null,
         stock: 0
       };
@@ -582,6 +592,13 @@ router.post("/api/admin/stock-entries", requireAuth, async (req, res) => {
       productsChanged = true;
     } else if (item.productId) {
       product = products.find((p) => p.id === item.productId);
+      // Se o produto já existe mas ainda não tem NCM/CST cadastrado, e essa
+      // entrada veio de uma nota que traz esses dados, aproveita e completa
+      // o cadastro sozinho — sem sobrescrever o que o lojista já preencheu.
+      if (product && (item.ncm || item.cst)) {
+        if (!product.ncm && item.ncm) { product.ncm = String(item.ncm).trim(); productsChanged = true; }
+        if (!product.cst && item.cst) { product.cst = String(item.cst).trim(); productsChanged = true; }
+      }
     }
     if (!product) continue;
 
@@ -627,6 +644,11 @@ router.post("/api/admin/stock-entries", requireAuth, async (req, res) => {
     nfeNumber: String(b.nfeNumber || "").trim(),
     supplierName: String(b.supplierName || "").trim(),
     note: String(b.note || "").trim(),
+    // "Ciência": momento em que o admin revisou o resumo da nota antes de
+    // liberar a tabela de itens (só existe pra entradas por NF-e). É um
+    // passo de conferência interna — não é a Manifestação do Destinatário
+    // da SEFAZ, que exige certificado digital e ainda não está integrada.
+    acknowledgedAt: b.acknowledgedAt ? String(b.acknowledgedAt) : null,
     items: appliedItems
   };
   entries.unshift(entry); // mais recente primeiro

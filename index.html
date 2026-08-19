@@ -778,9 +778,9 @@
         </div>
         <p class="field-hint" style="margin-bottom:18px; max-width:680px;">
           Dê entrada no estoque importando o XML da nota fiscal (NF-e) que o fornecedor te mandou —
-          o site lê os itens automaticamente, você só precisa dizer qual produto do seu catálogo
-          cada um corresponde. Produtos com estoque preenchido passam a descontar sozinhos a cada
-          venda e bloqueiam o pedido se acabar.
+          o site lê os itens automaticamente, mostra um resumo pra você dar ciência, e só depois
+          libera a conferência item a item. Produtos com estoque preenchido passam a descontar
+          sozinhos a cada venda e bloqueiam o pedido se acabar.
         </p>
 
         <div class="card" style="padding:20px; margin-bottom:24px; max-width:680px;">
@@ -792,12 +792,28 @@
           <p class="field-hint" id="nfeParseStatus"></p>
         </div>
 
+        <div id="nfeAckCard" style="display:none; max-width:680px;" class="card">
+          <h3 style="margin:0 0 6px; font-size:1rem;">Resumo da nota</h3>
+          <p class="field-hint" style="margin-top:0;">
+            Confira os dados abaixo antes de prosseguir. Isso é um passo de conferência interna
+            dentro do painel — não é a Manifestação do Destinatário da SEFAZ (que exige certificado
+            digital e ainda não está integrada aqui).
+          </p>
+          <div id="nfeAckSummary" style="margin:14px 0; font-size:0.9rem; line-height:1.7;"></div>
+          <div style="display:flex; gap:10px; flex-wrap:wrap;">
+            <button class="btn btn-solid" onclick="acknowledgeNfe()">Dar ciência e conferir itens</button>
+            <button class="btn btn-outline" onclick="downloadNfePdf()">Baixar PDF (resumo p/ arquivo)</button>
+            <button class="btn btn-outline" onclick="cancelNfeReview()">Cancelar</button>
+          </div>
+        </div>
+
         <div id="nfeReviewCard" style="display:none" class="card">
           <h3 style="margin:0 0 6px; font-size:1rem;">Conferir itens da nota</h3>
           <p class="field-hint" id="nfeSupplierInfo" style="margin-bottom:16px;"></p>
           <div id="nfeItemsTable"></div>
-          <div style="display:flex; gap:10px; margin-top:18px;">
+          <div style="display:flex; gap:10px; margin-top:18px; flex-wrap:wrap;">
             <button class="btn btn-solid" onclick="confirmStockEntry()">Confirmar entrada no estoque</button>
+            <button class="btn btn-outline" onclick="downloadNfePdf()">Baixar PDF (resumo p/ arquivo)</button>
             <button class="btn btn-outline" onclick="cancelNfeReview()">Cancelar</button>
           </div>
         </div>
@@ -992,6 +1008,12 @@
           <p class="field-hint">Preenchido automaticamente ao ler a NF-e do fornecedor, se a nota trouxer o código. Usado para localizar o produto rápido na tela de Estoque.</p>
         </div>
         <div class="field"><label>Código interno / SKU (opcional)</label><input type="text" id="pfSku" placeholder="Sua referência própria"></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>NCM (opcional)</label><input type="text" id="pfNcm" placeholder="Ex: 85176231">
+          <p class="field-hint">Classificação fiscal do produto. Preenchido automaticamente ao ler uma NF-e que traga esse dado.</p>
+        </div>
+        <div class="field"><label>CST / CSOSN (opcional)</label><input type="text" id="pfCst" placeholder="Ex: 102 ou 060"></div>
       </div>
       <div class="field"><label>Estoque mínimo para alerta (opcional)</label><input type="number" step="1" min="0" id="pfMinStock" placeholder="Padrão: 5 unidades">
         <p class="field-hint">Abaixo desse número o produto aparece com aviso de "estoque baixo" no painel.</p>
@@ -2284,6 +2306,7 @@ async function renderAllAdminPanels(){
 /* ---- Estoque: entrada por nota fiscal (NF-e) ---- */
 let stockEntries = [];
 let nfeParsedData = null; // resultado bruto do parse-nfe, guardado até o admin confirmar
+let nfeAcknowledgedAt = null; // hora em que o admin deu "ciência" do resumo, antes de ver os itens
 
 async function loadStockEntries(){
   try{
@@ -2303,8 +2326,10 @@ function handleNfeFileSelected(event){
     try{
       const parsed = await api("/api/admin/stock-entries/parse-nfe", { method: "POST", body: { xml: reader.result }, auth: true });
       nfeParsedData = parsed;
+      nfeAcknowledgedAt = null;
       statusEl.textContent = `${parsed.items.length} item(ns) encontrado(s) na nota.`;
-      renderNfeReview(parsed);
+      renderNfeAckSummary(parsed);
+      document.getElementById('nfeReviewCard').style.display = 'none';
     }catch(err){
       statusEl.textContent = "";
       showToast(err.message);
@@ -2312,6 +2337,31 @@ function handleNfeFileSelected(event){
   };
   reader.onerror = () => { statusEl.textContent = ""; showToast("Não foi possível ler o arquivo."); };
   reader.readAsText(file);
+}
+
+function money(v){ return "R$" + Number(v || 0).toFixed(2).replace(".", ","); }
+
+// Primeiro passo depois de ler o XML: mostra só o resumo da nota (sem os
+// itens ainda) pra o admin conferir que é a nota certa antes de partir pro
+// mapeamento produto a produto. É a "ciência" — um passo de conferência
+// interna, registrado no histórico junto com a entrada.
+function renderNfeAckSummary(parsed){
+  document.getElementById('nfeAckSummary').innerHTML = `
+    <div><strong>Fornecedor:</strong> ${escapeHtml(parsed.supplierName || 'Não identificado')}${parsed.supplierCnpj ? ' — CNPJ ' + escapeHtml(parsed.supplierCnpj) : ''}</div>
+    <div><strong>Nota:</strong> ${parsed.number ? 'nº ' + escapeHtml(parsed.number) : '—'}${parsed.series ? ' · série ' + escapeHtml(parsed.series) : ''}</div>
+    <div><strong>Emissão:</strong> ${parsed.issueDate ? formatDate(parsed.issueDate) : '—'}</div>
+    <div><strong>Chave de acesso:</strong> ${escapeHtml(parsed.chave || '—')}</div>
+    <div><strong>Valor total da nota:</strong> ${money(parsed.totalValue)}</div>
+    <div><strong>Itens:</strong> ${parsed.items.length}</div>
+  `;
+  document.getElementById('nfeAckCard').style.display = 'block';
+}
+
+function acknowledgeNfe(){
+  if(!nfeParsedData) return;
+  nfeAcknowledgedAt = new Date().toISOString();
+  document.getElementById('nfeAckCard').style.display = 'none';
+  renderNfeReview(nfeParsedData);
 }
 
 // Tenta casar automaticamente um item da nota a um produto já cadastrado,
@@ -2334,15 +2384,14 @@ function renderNfeReview(parsed){
   document.getElementById('nfeSupplierInfo').textContent =
     `${parsed.supplierName || 'Fornecedor não identificado'}${parsed.number ? ' · Nota nº ' + parsed.number : ''}${parsed.chave ? ' · Chave ' + parsed.chave : ''}`;
 
-  const productOptions = products.map(p => `<option value="${p.id}">${escapeHtml(p.name)}${p.barcode ? ' — ' + escapeHtml(p.barcode) : ''}</option>`).join('');
-
   document.getElementById('nfeItemsTable').innerHTML = `<table><thead><tr>
-      <th>Item da nota</th><th>Qtd. na nota</th><th>Produto no seu catálogo</th><th>Qtd. a somar</th>
+      <th>Item da nota</th><th>NCM / CST</th><th>Qtd. na nota</th><th>Produto no seu catálogo</th><th>Qtd. a somar</th>
     </tr></thead><tbody>
     ${parsed.items.map((it, idx) => {
       const guess = guessProductForNfeItem(it);
       return `<tr>
       <td>${escapeHtml(it.description)}<br><span class="field-hint" style="margin:0">Cód. fornecedor: ${escapeHtml(it.code || '—')}${it.barcode ? ' · Cód. barras: ' + escapeHtml(it.barcode) : ''}</span></td>
+      <td>${escapeHtml(it.ncm || '—')}${it.cst ? '<br>CST: ' + escapeHtml(it.cst) : ''}</td>
       <td>${it.qty}</td>
       <td>
         <select id="nfeMap${idx}" onchange="toggleNfeNewProductRow(${idx})">
@@ -2371,6 +2420,8 @@ function toggleNfeNewProductRow(idx){
 
 function cancelNfeReview(){
   nfeParsedData = null;
+  nfeAcknowledgedAt = null;
+  document.getElementById('nfeAckCard').style.display = 'none';
   document.getElementById('nfeReviewCard').style.display = 'none';
   document.getElementById('nfeFileInput').value = '';
   document.getElementById('nfeParseStatus').textContent = '';
@@ -2394,18 +2445,20 @@ async function confirmStockEntry(){
             name,
             price: document.getElementById('nfeNewPrice' + idx).value || 0,
             barcode: document.getElementById('nfeNewBarcode' + idx).value.trim(),
-            sku: it.code || ''
+            sku: it.code || '',
+            ncm: it.ncm || '',
+            cst: it.cst || ''
           }
         };
       }
-      return { productId: mapped, type: 'entrada', qty, unitCost: it.unitPrice || null };
+      return { productId: mapped, type: 'entrada', qty, unitCost: it.unitPrice || null, ncm: it.ncm || '', cst: it.cst || '' };
     })
     .filter(Boolean);
 
   if(items.length === 0){ showToast("Selecione ao menos um item com produto e quantidade válidos."); return; }
 
   try{
-    await api("/api/admin/stock-entries", {
+    const result = await api("/api/admin/stock-entries", {
       method: "POST",
       auth: true,
       body: {
@@ -2413,10 +2466,11 @@ async function confirmStockEntry(){
         nfeKey: nfeParsedData.chave,
         nfeNumber: nfeParsedData.number,
         supplierName: nfeParsedData.supplierName,
+        acknowledgedAt: nfeAcknowledgedAt,
         items
       }
     });
-    showToast("Estoque atualizado com sucesso.");
+    showToast(result && result.stockWarning ? result.stockWarning : "Estoque atualizado com sucesso.");
     cancelNfeReview();
     await loadProducts();
     await loadStockEntries();
@@ -2425,6 +2479,82 @@ async function confirmStockEntry(){
   }catch(err){
     showToast(err.message);
   }
+}
+
+/* ---- Estoque: PDF resumo da nota (gerado a partir do XML, uso interno) ---- */
+let _jsPdfLoadPromise = null;
+function loadJsPdf(){
+  if(window.jspdf) return Promise.resolve();
+  if(_jsPdfLoadPromise) return _jsPdfLoadPromise;
+  _jsPdfLoadPromise = new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
+    s.onload = resolve;
+    s.onerror = () => reject(new Error("Não foi possível carregar o gerador de PDF. Confira sua conexão."));
+    document.head.appendChild(s);
+  });
+  return _jsPdfLoadPromise;
+}
+
+// Gera um PDF simples a partir dos dados já lidos do XML — só pra guardar
+// junto do lançamento ou imprimir de referência. NÃO é o DANFE oficial
+// (não tem código de barras, QR code nem protocolo de autorização da
+// SEFAZ) e não substitui a nota fiscal de verdade.
+async function downloadNfePdf(){
+  if(!nfeParsedData) return;
+  try{
+    await loadJsPdf();
+  }catch(err){
+    showToast(err.message);
+    return;
+  }
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+  const parsed = nfeParsedData;
+  let y = 18;
+
+  doc.setFontSize(14); doc.setFont(undefined, 'bold');
+  doc.text('Resumo da Nota Fiscal — uso interno', 14, y); y += 6;
+  doc.setFontSize(8.5); doc.setFont(undefined, 'normal'); doc.setTextColor(120);
+  doc.text('Gerado a partir do XML importado. Não substitui o DANFE oficial.', 14, y); y += 9;
+  doc.setTextColor(0);
+
+  doc.setFontSize(10);
+  const lines = [
+    `Fornecedor: ${parsed.supplierName || 'Não identificado'}${parsed.supplierCnpj ? '  —  CNPJ ' + parsed.supplierCnpj : ''}`,
+    `Nota: ${parsed.number ? 'nº ' + parsed.number : '—'}${parsed.series ? '  ·  série ' + parsed.series : ''}`,
+    `Emissão: ${parsed.issueDate ? formatDate(parsed.issueDate) : '—'}`,
+    `Chave de acesso: ${parsed.chave || '—'}`,
+    `Valor total: ${money(parsed.totalValue)}`
+  ];
+  lines.forEach(l => { doc.text(l, 14, y); y += 6; });
+  y += 4;
+
+  doc.setFont(undefined, 'bold');
+  doc.text('Itens', 14, y); y += 7;
+  doc.setFont(undefined, 'normal');
+  doc.setFontSize(8.5);
+  const colX = { desc: 14, ncm: 100, cst: 122, qty: 140, unit: 155, total: 178 };
+  doc.setFont(undefined, 'bold');
+  doc.text('Descrição', colX.desc, y); doc.text('NCM', colX.ncm, y); doc.text('CST', colX.cst, y);
+  doc.text('Qtd', colX.qty, y); doc.text('Unit.', colX.unit, y); doc.text('Total', colX.total, y);
+  doc.setFont(undefined, 'normal'); y += 5;
+  doc.setLineWidth(0.2); doc.line(14, y - 3.5, 196, y - 3.5);
+
+  parsed.items.forEach(it => {
+    if(y > 275){ doc.addPage(); y = 18; }
+    const desc = doc.splitTextToSize(it.description || '', 82);
+    doc.text(desc, colX.desc, y);
+    doc.text(it.ncm || '—', colX.ncm, y);
+    doc.text(it.cst || '—', colX.cst, y);
+    doc.text(String(it.qty), colX.qty, y);
+    doc.text(money(it.unitPrice), colX.unit, y);
+    doc.text(money(it.totalPrice), colX.total, y);
+    y += Math.max(5, desc.length * 4.2);
+  });
+
+  const filename = `nota-${(parsed.number || 'sem-numero')}-${(parsed.supplierName || 'fornecedor').replace(/[^a-z0-9]+/gi, '-').toLowerCase()}.pdf`;
+  doc.save(filename);
 }
 
 /* ---- Estoque: lançamento manual (sem nota) ---- */
@@ -2529,7 +2659,7 @@ function renderStockEntries(){
   box.innerHTML = `<table><thead><tr><th>Data</th><th>Origem</th><th>Nota</th><th>Itens</th></tr></thead><tbody>
     ${stockEntries.map(e => `<tr>
       <td>${formatDate(e.date)}</td>
-      <td>${e.supplierName ? escapeHtml(e.supplierName) : (e.source === 'manual' ? 'Lançamento manual' : 'NF-e')}${e.note ? `<br><span class="field-hint" style="margin:0">${escapeHtml(e.note)}</span>` : ''}</td>
+      <td>${e.supplierName ? escapeHtml(e.supplierName) : (e.source === 'manual' ? 'Lançamento manual' : 'NF-e')}${e.acknowledgedAt ? `<br><span class="field-hint" style="margin:0">Ciência dada em ${formatDate(e.acknowledgedAt)}</span>` : ''}${e.note ? `<br><span class="field-hint" style="margin:0">${escapeHtml(e.note)}</span>` : ''}</td>
       <td>${e.nfeNumber ? 'Nº ' + escapeHtml(e.nfeNumber) : '—'}</td>
       <td>${e.items.map(i => `${typeLabel[i.type] || '+'}${i.qty} ${escapeHtml(i.name)}<span class="field-hint" style="margin:0"> (${i.before ?? '—'} → ${i.after ?? '—'})</span>`).join('<br>')}</td>
     </tr>`).join('')}
@@ -3055,8 +3185,8 @@ function renderAdminProducts(){
           : p.stock <= minStockThreshold
             ? `<span class="status-pill status-pendente">${p.stock} un.</span>`
             : `<span class="status-pill status-entregue">${p.stock} un.</span>`;
-      const codeLine = (p.barcode || p.sku)
-        ? `<br><span class="field-hint" style="margin:0">${p.barcode ? 'Cód. barras: ' + escapeHtml(p.barcode) : ''}${p.barcode && p.sku ? ' · ' : ''}${p.sku ? 'SKU: ' + escapeHtml(p.sku) : ''}</span>`
+      const codeLine = (p.barcode || p.sku || p.ncm || p.cst)
+        ? `<br><span class="field-hint" style="margin:0">${p.barcode ? 'Cód. barras: ' + escapeHtml(p.barcode) : ''}${p.barcode && p.sku ? ' · ' : ''}${p.sku ? 'SKU: ' + escapeHtml(p.sku) : ''}${(p.ncm || p.cst) && (p.barcode || p.sku) ? ' · ' : ''}${p.ncm ? 'NCM: ' + escapeHtml(p.ncm) : ''}${p.ncm && p.cst ? ' · ' : ''}${p.cst ? 'CST: ' + escapeHtml(p.cst) : ''}</span>`
         : '';
       return `<tr>
         <td>${p.image ? `<img class="table-thumb" src="${escapeAttr(p.image)}" onerror="this.style.visibility='hidden'">` : `<div class="table-thumb"></div>`}</td>
@@ -3103,6 +3233,8 @@ function openProductForm(id){
     document.getElementById('pfStock').value = (p.stock !== null && p.stock !== undefined) ? p.stock : '';
     document.getElementById('pfBarcode').value = p.barcode || '';
     document.getElementById('pfSku').value = p.sku || '';
+    document.getElementById('pfNcm').value = p.ncm || '';
+    document.getElementById('pfCst').value = p.cst || '';
     document.getElementById('pfMinStock').value = (p.minStock !== null && p.minStock !== undefined) ? p.minStock : '';
     document.getElementById('pfWeight').value = p.weight || '';
     document.getElementById('pfWidth').value = p.width || '';
@@ -3276,6 +3408,8 @@ async function submitProductForm(e){
     stock: document.getElementById('pfStock').value !== '' ? parseInt(document.getElementById('pfStock').value, 10) : null,
     barcode: document.getElementById('pfBarcode').value.trim(),
     sku: document.getElementById('pfSku').value.trim(),
+    ncm: document.getElementById('pfNcm').value.trim(),
+    cst: document.getElementById('pfCst').value.trim(),
     minStock: document.getElementById('pfMinStock').value !== '' ? parseInt(document.getElementById('pfMinStock').value, 10) : null,
     promoPrice: promo ? parseFloat(promo) : null,
     category: document.getElementById('pfCategory').value,
